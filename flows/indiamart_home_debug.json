@@ -1,0 +1,21 @@
+{
+  "suite_name": "Agentic E2E",
+  "module_name": "indiamart_home_debug",
+  "base_url": "https://www.indiamart.com",
+  "start_url": "${base_url}",
+  "browsers": ["chromium"],
+  "headless": false,
+  "slow_mo": 150,
+  "steps": [
+    {
+      "name": "Wait for page load",
+      "action": "evaluate",
+      "script": "() => document.readyState"
+    },
+    {
+      "name": "Capture visible homepage",
+      "action": "screenshot",
+      "screenshot_name": "indiamart_home.png"
+    }
+  ]
+}

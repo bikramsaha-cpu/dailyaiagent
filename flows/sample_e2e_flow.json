@@ -1,0 +1,30 @@
+{
+  "suite_name": "Agentic E2E",
+  "module_name": "sample_search_flow",
+  "base_url": "https://example.com",
+  "start_url": "${base_url}",
+  "browsers": ["chromium"],
+  "headless": false,
+  "slow_mo": 120,
+  "variables": {
+    "query": "domain"
+  },
+  "steps": [
+    {
+      "name": "Wait for page heading",
+      "action": "wait_for",
+      "selector": "h1"
+    },
+    {
+      "name": "Verify page heading",
+      "action": "assert_text",
+      "selector": "h1",
+      "expects_text": "Example Domain"
+    },
+    {
+      "name": "Capture homepage screenshot",
+      "action": "screenshot",
+      "screenshot_name": "homepage.png"
+    }
+  ]
+}

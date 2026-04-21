@@ -1,0 +1,65 @@
+[
+  {
+    "id": "pbr",
+    "label": "PBR Desktop",
+    "suite": "PBR",
+    "runner": "PBR/run_all.py",
+    "description": "Runs the PBR automation bundle",
+    "sheet_name": "Buyer Automation",
+    "default_tab": "PBR"
+  },
+  {
+    "id": "enq",
+    "label": "ENQ Desktop",
+    "suite": "ENQ",
+    "runner": "enq/run_all.py",
+    "description": "Runs the ENQ automation bundle",
+    "sheet_name": "Buyer Automation",
+    "default_tab": "ENQ"
+  },
+  {
+    "id": "bmc",
+    "label": "BMC Desktop",
+    "suite": "BMC",
+    "runner": "bmc/run_all.py",
+    "description": "Runs the BMC automation bundle",
+    "sheet_name": "Buyer Automation",
+    "default_tab": "BMC"
+  },
+  {
+    "id": "buyermy",
+    "label": "BuyerMy Desktop",
+    "suite": "BuyerMy",
+    "runner": "buyermy/run_all.py",
+    "description": "Runs the BuyerMy automation bundle",
+    "sheet_name": "Buyer Automation",
+    "default_tab": "Buyermy"
+  },
+  {
+    "id": "lms",
+    "label": "LMS Desktop",
+    "suite": "LMS",
+    "runner": "lms/run_all.py",
+    "description": "Runs the LMS automation bundle",
+    "sheet_name": "Seller My Automation",
+    "default_tab": "LMS"
+  },
+  {
+    "id": "sellerbl",
+    "label": "Seller BL Desktop",
+    "suite": "SellerBL",
+    "runner": "sellerbl/run_all.py",
+    "description": "Runs the Seller BL automation bundle",
+    "sheet_name": "Seller My Automation",
+    "default_tab": "Sellerbl - Relevant"
+  },
+  {
+    "id": "sellermy",
+    "label": "SellerMy Desktop",
+    "suite": "SellerMy",
+    "runner": "sellermy/run_all.py",
+    "description": "Runs the SellerMy automation bundle",
+    "sheet_name": "Seller My Automation",
+    "default_tab": "Seller Dashboard"
+  }
+]

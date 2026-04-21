@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.hypothesis/
+
+# Local artifacts and runtime state
+artifacts/
+*.log
+*.err
+*.png
+*.pdf
+
+# Local credentials and sessions
+**/credentials.json
+**/auth.json
+*.pem
+
+# Local env/config
+.env
+.env.*
+!.env.example
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
