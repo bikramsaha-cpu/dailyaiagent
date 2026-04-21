@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime
 from pathlib import Path
@@ -19,8 +20,26 @@ class GoogleSheetLogger:
             "https://spreadsheets.google.com/feeds",
             "https://www.googleapis.com/auth/drive",
         ]
+        creds = self._load_credentials(scope)
+        client = gspread.authorize(creds)
+        self.sheet = client.open(sheet_name).worksheet(tab_name)
+        self.tab_name = tab_name
+        print("GoogleSheetLogger initialized successfully")
+
+    @staticmethod
+    def _load_credentials(scope):
+        env_json = os.getenv("AUTOMATION_GOOGLE_CREDENTIALS_JSON", "").strip()
+        if env_json:
+            try:
+                payload = json.loads(env_json)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    "AUTOMATION_GOOGLE_CREDENTIALS_JSON is set but is not valid JSON."
+                ) from exc
+            return Credentials.from_service_account_info(payload, scopes=scope)
+
         candidate_paths = []
-        env_path = os.getenv("AUTOMATION_GOOGLE_CREDENTIALS")
+        env_path = os.getenv("AUTOMATION_GOOGLE_CREDENTIALS", "").strip()
         if env_path:
             candidate_paths.append(Path(env_path))
         candidate_paths.extend(
@@ -34,14 +53,11 @@ class GoogleSheetLogger:
         creds_path = next((path for path in candidate_paths if path.exists()), None)
         if creds_path is None:
             raise FileNotFoundError(
-                "Could not find Google credentials. Set AUTOMATION_GOOGLE_CREDENTIALS or place a credentials.json file "
-                "in core/, PBR/, enq/, or the repository root."
+                "Could not find Google credentials. Set AUTOMATION_GOOGLE_CREDENTIALS_JSON, "
+                "set AUTOMATION_GOOGLE_CREDENTIALS to a credentials file path, or place a "
+                "credentials.json file in core/, PBR/, enq/, or the repository root."
             )
-        creds = Credentials.from_service_account_file(creds_path, scopes=scope)
-        client = gspread.authorize(creds)
-        self.sheet = client.open(sheet_name).worksheet(tab_name)
-        self.tab_name = tab_name
-        print("GoogleSheetLogger initialized successfully")
+        return Credentials.from_service_account_file(creds_path, scopes=scope)
 
     def log_status(self, test_title, status, remarks="", browser="Chromium", phone="Unknown", run_time=None, tab_name=None):
         sheet = self.sheet if tab_name is None else self.sheet.spreadsheet.worksheet(tab_name)

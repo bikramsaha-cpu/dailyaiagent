@@ -797,6 +797,21 @@ def run_url_agent_subprocess(url: str, *, headless: bool = False, slow_mo: int =
         ) from exc
     if stderr:
         payload["stderr"] = ((payload.get("stderr") or "") + ("\n" if payload.get("stderr") else "") + stderr).strip()
+    if result.returncode != 0:
+        payload.setdefault("status", "Fail")
+        payload.setdefault("suite_name", "URL Agent")
+        payload.setdefault("module_name", url)
+        payload.setdefault("passed", 0)
+        payload.setdefault("failed", 1)
+        payload.setdefault("total", 1)
+        payload.setdefault("extra", {})
+        payload["extra"].setdefault("human_required", ["URL agent failed before producing a complete report."])
+        payload["extra"].setdefault("findings", [])
+        payload["extra"].setdefault("test_cases", [])
+        payload["extra"].setdefault("case_counts", {"Pass": 0, "Fail": 1, "Needs Review": 0})
+        payload["extra"].setdefault("url", url)
+    else:
+        payload.setdefault("status", "Pass")
     payload.setdefault("command", " ".join(command))
     return payload
 
@@ -1382,7 +1397,8 @@ with tab6:
                 st.cache_data.clear()
                 st.session_state["last_url_agent_run_result"] = result
                 last_url_agent_run = result
-                if result["status"] == "Pass":
+                result_status = str(result.get("status", "Fail"))
+                if result_status == "Pass":
                     st.success("Page assessment completed.")
                 else:
                     st.warning("Page assessment completed with human review recommendations.")
