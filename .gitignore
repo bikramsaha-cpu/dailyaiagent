@@ -13,6 +13,7 @@ artifacts/
 
 # Local credentials and sessions
 **/credentials.json
+**/*credential*.json
 **/auth.json
 *.pem
 
