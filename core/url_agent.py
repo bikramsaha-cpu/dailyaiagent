@@ -25,29 +25,32 @@ class URLAuditAgent:
         artifact_dir = self._artifact_dir(url)
         screenshot_path = artifact_dir / "page.png"
         state_path = artifact_dir / "auth_state.json"
-
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=headless, slow_mo=slow_mo)
-            context = browser.new_context()
-            page = context.new_page()
-            page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            page.wait_for_timeout(1500)
-            login_case = self._attempt_login(page, context)
-            if login_case["status"] == "Pass":
-                try:
-                    context.storage_state(path=str(state_path))
-                except Exception:
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=headless, slow_mo=slow_mo)
+                context = browser.new_context()
+                page = context.new_page()
+                page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                page.wait_for_timeout(1500)
+                login_case = self._attempt_login(page, context)
+                if login_case["status"] == "Pass":
+                    try:
+                        context.storage_state(path=str(state_path))
+                    except Exception:
+                        state_path = None
+                else:
                     state_path = None
-            else:
-                state_path = None
-            page.wait_for_timeout(1000)
-            page.screenshot(path=str(screenshot_path), full_page=True)
-            diagnostics = collect_page_diagnostics(page, action="url_audit", locator_name="page", intent="page audit")
-            summary = self._extract_page_summary(page)
-            planned = self._plan_cases(summary, diagnostics, url)
-            executed = [login_case] + self._execute_cases(browser, url, planned, artifact_dir, state_path)
-            context.close()
-            browser.close()
+                page.wait_for_timeout(1000)
+                page.screenshot(path=str(screenshot_path), full_page=True)
+                diagnostics = collect_page_diagnostics(page, action="url_audit", locator_name="page", intent="page audit")
+                summary = self._extract_page_summary(page)
+                planned = self._plan_cases(summary, diagnostics, url)
+                executed = [login_case] + self._execute_cases(browser, url, planned, artifact_dir, state_path)
+                context.close()
+                browser.close()
+        except Exception as exc:
+            detail = str(exc).strip() or repr(exc) or exc.__class__.__name__
+            raise RuntimeError(f"Could not start or run Playwright URL audit. {exc.__class__.__name__}: {detail}") from exc
 
         findings = self._findings(summary, diagnostics, executed)
         human_required = self._human_required(summary, diagnostics, executed)

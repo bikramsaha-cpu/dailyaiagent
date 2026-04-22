@@ -1,19 +1,21 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 from core.google_logger import GoogleSheetLogger
 from core.module_registry import get_module, load_modules
 from core.runner import ModuleRunner
-from core.settings import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, TESTLINK_API_KEY, TESTLINK_URL
+from core.settings import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, ROOT_DIR, TESTLINK_API_KEY, TESTLINK_URL
 from core.store import ExecutionStore
 from core.testlink_generator import (
     TestLinkCaseGenerator,
     TestLinkGeneratorConfig,
     default_output_dir_for_module,
 )
-from core.url_agent import URLAuditAgent
 
 
 def list_modules_payload() -> list[dict[str, Any]]:
@@ -105,7 +107,47 @@ def run_module(module_id: str) -> dict[str, Any]:
 
 
 def run_url_audit(url: str, *, headless: bool = False, slow_mo: int = 100) -> dict[str, Any]:
-    return URLAuditAgent().run(url, headless=headless, slow_mo=slow_mo)
+    command = [sys.executable, str((ROOT_DIR / "run_url_agent.py").resolve()), "--url", url, "--slow-mo", str(slow_mo)]
+    if headless:
+        command.append("--headless")
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=str(ROOT_DIR),
+    )
+    stdout = (result.stdout or "").strip()
+    stderr = (result.stderr or "").strip()
+    payload_text = stdout
+    json_start = stdout.find("{")
+    if json_start >= 0:
+        payload_text = stdout[json_start:]
+    try:
+        payload = json.loads(payload_text) if payload_text else {}
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"URL agent returned non-JSON output.\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
+        ) from exc
+    if stderr:
+        payload["stderr"] = ((payload.get("stderr") or "") + ("\n" if payload.get("stderr") else "") + stderr).strip()
+    if result.returncode != 0:
+        payload.setdefault("status", "Fail")
+        payload.setdefault("suite_name", "URL Agent")
+        payload.setdefault("module_name", url)
+        payload.setdefault("passed", 0)
+        payload.setdefault("failed", 1)
+        payload.setdefault("total", 1)
+        payload.setdefault("extra", {})
+        payload["extra"].setdefault("human_required", ["URL agent failed before producing a complete report."])
+        payload["extra"].setdefault("findings", [])
+        payload["extra"].setdefault("test_cases", [])
+        payload["extra"].setdefault("case_counts", {"Pass": 0, "Fail": 1, "Needs Review": 0})
+        payload["extra"].setdefault("url", url)
+    else:
+        payload.setdefault("status", "Pass")
+    payload.setdefault("command", " ".join(command))
+    return payload
 
 
 def generate_testlink_tests(

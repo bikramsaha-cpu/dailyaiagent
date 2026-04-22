@@ -22,7 +22,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed with ${response.status}`);
+    if (text) {
+      try {
+        const parsed = JSON.parse(text) as { detail?: string };
+        throw new Error(parsed.detail || text);
+      } catch {
+        throw new Error(text);
+      }
+    }
+    throw new Error(`Request failed with ${response.status}`);
   }
   return response.json() as Promise<T>;
 }
@@ -129,6 +137,22 @@ export type UrlAgentRunResponse = {
   };
 };
 
+export type ExecutionTask = {
+  id: string;
+  kind: "module" | "url_agent";
+  title: string;
+  started_at: string;
+  status: "running" | "completed" | "failed" | "stopped";
+  browser_mode: "headed" | "headless";
+  command: string;
+  cwd: string;
+  payload: Record<string, unknown>;
+  pid?: number | null;
+  finished_at?: string | null;
+  result?: RunItem | UrlAgentRunResponse | null;
+  error?: string | null;
+};
+
 export const api = {
   getStatus: () => request<StatusPayload>("/status"),
   getModules: () => request<ModuleItem[]>("/modules"),
@@ -176,6 +200,26 @@ export const api = {
     request<DiagnosticsHealingItem[]>(`/diagnostics/healings?limit=${limit}`),
   getDiagnosticsSteps: (limit = 100) =>
     request<DiagnosticsStepItem[]>(`/diagnostics/steps?limit=${limit}`),
+  startModuleExecution: (payload: { module_id: string; browser_mode: "headed" | "headless" }) =>
+    request<ExecutionTask>("/executions/module/start", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  startUrlAgentExecution: (payload: { url: string; headless?: boolean; slow_mo?: number }) =>
+    request<ExecutionTask>("/executions/url-agent/start", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  getActiveExecutions: () => request<ExecutionTask[]>("/executions/active"),
+  getExecution: (taskId: string) => request<ExecutionTask>(`/executions/${taskId}`),
+  stopExecution: (taskId: string) =>
+    request<ExecutionTask>(`/executions/${taskId}/stop`, {
+      method: "POST",
+    }),
+  restartExecution: (taskId: string) =>
+    request<ExecutionTask>(`/executions/${taskId}/restart`, {
+      method: "POST",
+    }),
   runModule: (moduleId: string) =>
     request<RunItem>(`/modules/${moduleId}/run`, { method: "POST" }),
   generateTestlink: (payload: {

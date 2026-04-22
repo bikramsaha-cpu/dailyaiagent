@@ -14,8 +14,10 @@ import {
   LoaderCircle,
   PanelLeftClose,
   PanelLeftOpen,
+  RotateCcw,
   Settings2,
   Sparkles,
+  Square,
   Stethoscope,
   TableProperties,
   X,
@@ -25,6 +27,7 @@ import {
   api,
   DiagnosticsHealingItem,
   DiagnosticsStepItem,
+  ExecutionTask,
   ModuleItem,
   RunItem,
   SheetRecord,
@@ -258,13 +261,29 @@ export function DashboardShell() {
   const [generationResult, setGenerationResult] = useState<TestLinkGenerationResponse | null>(null);
   const [urlAgentInput, setUrlAgentInput] = useState("https://example.com");
   const [urlAgentHeadless, setUrlAgentHeadless] = useState(false);
+  const [moduleBrowserMode, setModuleBrowserMode] = useState<"headed" | "headless">("headed");
   const [urlAgentResult, setUrlAgentResult] = useState<UrlAgentRunResponse | null>(null);
   const [error, setError] = useState("");
+  const [settingsSavedMessage, setSettingsSavedMessage] = useState("");
+  const [executionNotice, setExecutionNotice] = useState("");
   const [isSheetLoading, setIsSheetLoading] = useState(false);
   const [isRunningModule, setIsRunningModule] = useState(false);
+  const [isGeneratingTests, setIsGeneratingTests] = useState(false);
+  const [isRunningUrlAgent, setIsRunningUrlAgent] = useState(false);
+  const [isStoppingExecution, setIsStoppingExecution] = useState(false);
+  const [activeTask, setActiveTask] = useState<ExecutionTask | null>(null);
   const [isPending, startTransition] = useTransition();
   const loadedSheetTabsRef = useRef<Record<string, string[]>>({});
   const loadedSheetRecordsRef = useRef<Record<string, SheetRecord[]>>({});
+
+  const derivedAiEnabled = Boolean(
+    workspaceSettings.llmApiKey.trim() &&
+      workspaceSettings.llmBaseUrl.trim() &&
+      workspaceSettings.llmModel.trim(),
+  );
+  const derivedTestlinkEnabled = Boolean(
+    workspaceSettings.testlinkApiKey.trim() && workspaceSettings.testlinkUrl.trim(),
+  );
 
   useEffect(() => {
     setMounted(true);
@@ -284,17 +303,19 @@ export function DashboardShell() {
   useEffect(() => {
     const loadDashboard = async () => {
       try {
-        const [status, modules, runs, healingData, stepData] = await Promise.all([
+        const [status, modules, runs, healingData, stepData, activeExecutions] = await Promise.all([
           api.getStatus(),
           api.getModules(),
           api.getRuns(20),
           api.getDiagnosticsHealings(150),
           api.getDiagnosticsSteps(150),
+          api.getActiveExecutions(),
         ]);
         setData({ status, modules, runs });
         setHealings(healingData);
         setStepEvents(stepData);
         setSelectedModule((current) => current || modules[0]?.id || "");
+        setActiveTask(activeExecutions[0] || null);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Could not load dashboard.");
       }
@@ -304,6 +325,39 @@ export function DashboardShell() {
       void loadDashboard();
     });
   }, []);
+
+  useEffect(() => {
+    if (!activeTask?.id) {
+      return;
+    }
+    const timer = window.setInterval(async () => {
+      try {
+        const task = await api.getExecution(activeTask.id);
+        setActiveTask(task);
+        const running = task.status === "running";
+        setIsRunningModule(running && task.kind === "module");
+        setIsRunningUrlAgent(running && task.kind === "url_agent");
+        if (!running) {
+          if (task.kind === "module" && task.result) {
+            const run = task.result as RunItem;
+            setData((current) => ({ ...current, runs: [run, ...current.runs].slice(0, 20) }));
+            setActiveTab("Launcher History");
+          }
+          if (task.kind === "url_agent" && task.result) {
+            setUrlAgentResult(task.result as UrlAgentRunResponse);
+          }
+          if (task.error) {
+            setError(task.error);
+          }
+          window.clearInterval(timer);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not refresh execution state.");
+        window.clearInterval(timer);
+      }
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [activeTask?.id]);
 
   const selectedDefinition = useMemo(
     () => data.modules.find((module) => module.id === selectedModule) || data.modules[0],
@@ -474,6 +528,22 @@ export function DashboardShell() {
     return count;
   }, [availableBrowsers.length, availableStatuses.length, browserFilter.length, endDate, searchText, startDate, statusFilter.length]);
 
+  const activeExecutionLabel = useMemo(() => {
+    if (isRunningUrlAgent) {
+      return `Running URL agent in ${urlAgentHeadless ? "headless" : "headed"} mode and collecting page evidence...`;
+    }
+    if (isGeneratingTests) {
+      return "Generating tests from TestLink...";
+    }
+    if (isRunningModule) {
+      return `Running selected module in ${moduleBrowserMode} mode...`;
+    }
+    if (isSheetLoading) {
+      return "Refreshing dashboard data...";
+    }
+    return "";
+  }, [isGeneratingTests, isRunningModule, isRunningUrlAgent, isSheetLoading]);
+
   function toggleFilterValue(values: string[], value: string) {
     return values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
   }
@@ -497,12 +567,13 @@ export function DashboardShell() {
     setError("");
     setIsRunningModule(true);
     try {
-      const run = await api.runModule(selectedDefinition.id);
-      setData((current) => ({ ...current, runs: [run, ...current.runs].slice(0, 20) }));
-      setActiveTab("Launcher History");
+      const task = await api.startModuleExecution({
+        module_id: selectedDefinition.id,
+        browser_mode: moduleBrowserMode,
+      });
+      setActiveTask(task);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Module run failed.");
-    } finally {
       setIsRunningModule(false);
     }
   }
@@ -516,6 +587,7 @@ export function DashboardShell() {
       return;
     }
     setError("");
+    setIsGeneratingTests(true);
     try {
       const result = await api.generateTestlink({
         module_id: selectedDefinition.id,
@@ -527,6 +599,8 @@ export function DashboardShell() {
       setGenerationResult(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not generate tests.");
+    } finally {
+      setIsGeneratingTests(false);
     }
   }
 
@@ -536,20 +610,84 @@ export function DashboardShell() {
       return;
     }
     setError("");
+    setIsRunningUrlAgent(true);
     try {
-      const result = await api.runUrlAgent({
+      const task = await api.startUrlAgentExecution({
         url: urlAgentInput.trim(),
         headless: urlAgentHeadless,
         slow_mo: 100,
       });
-      setUrlAgentResult(result);
+      setActiveTask(task);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not run URL agent.");
     }
   }
 
+  async function handleStopExecution() {
+    if (!activeTask?.id) {
+      return;
+    }
+    const taskSnapshot = activeTask;
+    setIsStoppingExecution(true);
+    setIsRunningModule(false);
+    setIsRunningUrlAgent(false);
+    setActiveTask((current) =>
+      current
+        ? {
+            ...current,
+            status: "stopped",
+            finished_at: new Date().toISOString(),
+            error: "Execution was stopped by the user.",
+          }
+        : null,
+    );
+    showExecutionNotice(`${taskSnapshot.kind === "module" ? "Module" : "URL agent"} execution stopped.`);
+    try {
+      const task = await api.stopExecution(taskSnapshot.id);
+      setActiveTask(task);
+    } catch (err) {
+      setActiveTask(taskSnapshot);
+      setIsRunningModule(taskSnapshot.kind === "module");
+      setIsRunningUrlAgent(taskSnapshot.kind === "url_agent");
+      setExecutionNotice("");
+      setError(err instanceof Error ? err.message : "Could not stop execution.");
+    } finally {
+      setIsStoppingExecution(false);
+    }
+  }
+
+  async function handleRestartExecution() {
+    if (!activeTask) {
+      return;
+    }
+    setError("");
+    try {
+      if (activeTask.status === "running") {
+        await api.stopExecution(activeTask.id);
+      }
+      if (activeTask.kind === "module") {
+        await handleRunModule();
+        return;
+      }
+      await handleRunUrlAgent();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not restart execution.");
+    }
+  }
+
   function handleSaveSettings() {
     window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(workspaceSettings));
+    setSettingsSavedMessage("Workspace settings saved successfully.");
+    window.setTimeout(() => {
+      setSettingsSavedMessage("");
+    }, 2500);
+  }
+
+  function showExecutionNotice(message: string) {
+    setExecutionNotice(message);
+    window.setTimeout(() => {
+      setExecutionNotice("");
+    }, 3000);
   }
 
   function renderExecutionsTable() {
@@ -711,9 +849,11 @@ export function DashboardShell() {
           <button
             type="button"
             onClick={handleGenerateTests}
-            className="mt-6 inline-flex rounded-2xl bg-[linear-gradient(135deg,#2a56ff,_#1ca7d8)] px-5 py-4 font-semibold text-white shadow-lg shadow-cyanflash/20 transition hover:translate-y-[-1px]"
+            disabled={isGeneratingTests}
+            className="mt-6 inline-flex items-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#2a56ff,_#1ca7d8)] px-5 py-4 font-semibold text-white shadow-lg shadow-cyanflash/20 transition hover:translate-y-[-1px] disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Generate Tests
+            {isGeneratingTests ? <LoaderCircle className="h-5 w-5 animate-spin" /> : null}
+            {isGeneratingTests ? "Generating..." : "Generate Tests"}
           </button>
         </div>
 
@@ -944,10 +1084,33 @@ export function DashboardShell() {
               <button
                 type="button"
                 onClick={handleRunUrlAgent}
-                className="inline-flex rounded-2xl bg-[linear-gradient(135deg,#2a56ff,_#1ca7d8)] px-5 py-4 font-semibold text-white shadow-lg shadow-cyanflash/20 transition hover:translate-y-[-1px]"
+                disabled={isRunningUrlAgent}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#2a56ff,_#1ca7d8)] px-5 py-4 font-semibold text-white shadow-lg shadow-cyanflash/20 transition hover:translate-y-[-1px] disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Run URL Agent
+                {isRunningUrlAgent ? <LoaderCircle className="h-5 w-5 animate-spin" /> : null}
+                {isRunningUrlAgent ? "Running URL Agent..." : "Run URL Agent"}
               </button>
+              {activeTask?.kind === "url_agent" ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={handleStopExecution}
+                    disabled={!isRunningUrlAgent || isStoppingExecution}
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700 transition disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Square className="h-4 w-4" />
+                    {isStoppingExecution ? "Stopping..." : "Stop"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRestartExecution}
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-800 transition hover:border-cobalt hover:text-cobalt"
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    Restart
+                  </button>
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
@@ -1032,6 +1195,24 @@ export function DashboardShell() {
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(41,84,255,0.12),_transparent_36%),linear-gradient(180deg,_#f7fbff_0%,_#eef5ff_100%)] px-6 py-8 text-ink md:px-10">
       <div className="mx-auto max-w-7xl space-y-8">
+        {activeExecutionLabel ? (
+          <section className="overflow-hidden rounded-[24px] border border-blue-100 bg-white/90 shadow-soft backdrop-blur">
+            <div className="h-1.5 w-full overflow-hidden bg-blue-50">
+              <div className="h-full w-1/3 animate-[pulse_1.2s_ease-in-out_infinite] rounded-full bg-[linear-gradient(135deg,#2a56ff,_#1ca7d8)]" />
+            </div>
+            <div className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700">
+              <LoaderCircle className="h-4 w-4 animate-spin text-cobalt" />
+              <span>{activeExecutionLabel}</span>
+            </div>
+          </section>
+        ) : null}
+
+        {executionNotice ? (
+          <section className="rounded-[22px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 shadow-soft">
+            {executionNotice}
+          </section>
+        ) : null}
+
         <section className="flex flex-wrap items-center justify-between gap-4 rounded-[28px] border border-white/70 bg-white/80 px-5 py-4 shadow-soft backdrop-blur">
           <div className="flex items-center gap-3">
             <button
@@ -1047,8 +1228,11 @@ export function DashboardShell() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <StatusPill label="AI" value={data.status?.ai.label || "Loading"} />
-            <StatusPill label="TestLink" value={data.status?.testlink.label || "Loading"} />
+            <StatusPill label="AI" value={derivedAiEnabled ? "Enabled" : data.status?.ai.label || "Disabled"} />
+            <StatusPill
+              label="TestLink"
+              value={derivedTestlinkEnabled ? "Configured" : data.status?.testlink.label || "Missing Config"}
+            />
             <StatusPill label="Sheet" value={selectedSheetTab || "Loading"} />
             <button
               type="button"
@@ -1121,15 +1305,58 @@ export function DashboardShell() {
                       </select>
                     </label>
 
-                    <button
-                      type="button"
-                      onClick={handleRunModule}
-                      disabled={isRunningModule || !selectedDefinition}
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#2a56ff,_#1ca7d8)] px-5 py-4 text-base font-semibold text-white shadow-lg shadow-cyanflash/20 transition hover:translate-y-[-1px] disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {isRunningModule ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CirclePlay className="h-5 w-5" />}
-                      {isRunningModule ? "Running module..." : "Run Selected Module"}
-                    </button>
+                    <div>
+                      <p className="text-sm font-medium text-slate-600">Browser Mode</p>
+                      <div className="mt-2 flex gap-2">
+                        {(["headed", "headless"] as const).map((mode) => (
+                          <button
+                            key={mode}
+                            type="button"
+                            onClick={() => setModuleBrowserMode(mode)}
+                            className={`rounded-full border px-4 py-2 text-sm transition ${
+                              moduleBrowserMode === mode
+                                ? "border-cobalt bg-blue-50 text-slate-900"
+                                : "border-slate-200 bg-white text-slate-600"
+                            }`}
+                          >
+                            {mode}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3">
+                      <button
+                        type="button"
+                        onClick={handleRunModule}
+                        disabled={isRunningModule || !selectedDefinition}
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#2a56ff,_#1ca7d8)] px-5 py-4 text-base font-semibold text-white shadow-lg shadow-cyanflash/20 transition hover:translate-y-[-1px] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {isRunningModule ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <CirclePlay className="h-5 w-5" />}
+                        {isRunningModule ? "Running module..." : "Run Selected Module"}
+                      </button>
+                      {activeTask?.kind === "module" ? (
+                        <div className="grid grid-cols-2 gap-3">
+                          <button
+                            type="button"
+                            onClick={handleStopExecution}
+                            disabled={!isRunningModule || isStoppingExecution}
+                            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700 transition disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <Square className="h-4 w-4" />
+                            {isStoppingExecution ? "Stopping..." : "Stop"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleRestartExecution}
+                            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-800 transition hover:border-cobalt hover:text-cobalt"
+                          >
+                            <RotateCcw className="h-4 w-4" />
+                            Restart
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
 
                     {selectedDefinition ? (
                       <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 text-sm text-slate-600">
@@ -1350,6 +1577,11 @@ export function DashboardShell() {
                     />
                   </label>
                 </div>
+                {settingsSavedMessage ? (
+                  <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                    {settingsSavedMessage}
+                  </div>
+                ) : null}
                 <div className="mt-5 flex flex-wrap items-center gap-3">
                   <button
                     type="button"

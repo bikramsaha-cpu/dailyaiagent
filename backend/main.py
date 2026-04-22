@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from core.execution_tasks import task_manager
 from core.api_services import (
     generate_testlink_tests,
     get_module_payload,
@@ -34,6 +35,11 @@ class TestLinkRequest(BaseModel):
     output_dir: str | None = None
     overwrite: bool = False
     max_cases: int | None = Field(default=None, ge=1)
+
+
+class ModuleExecutionRequest(BaseModel):
+    module_id: str
+    browser_mode: str = Field(default="headed", pattern="^(headed|headless)$")
 
 
 app = FastAPI(
@@ -84,6 +90,57 @@ def run_selected_module(module_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Module run failed: {exc}") from exc
+
+
+@app.post("/api/executions/module/start")
+def start_module_execution(request: ModuleExecutionRequest) -> dict[str, Any]:
+    try:
+        return task_manager.start_module(request.module_id, browser_mode=request.browser_mode)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not start module execution: {exc}") from exc
+
+
+@app.post("/api/executions/url-agent/start")
+def start_url_agent_execution(request: URLAgentRequest) -> dict[str, Any]:
+    try:
+        return task_manager.start_url_agent(request.url, headless=request.headless, slow_mo=request.slow_mo)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not start URL agent execution: {exc}") from exc
+
+
+@app.get("/api/executions/active")
+def active_executions() -> list[dict[str, Any]]:
+    return task_manager.list_active()
+
+
+@app.get("/api/executions/{task_id}")
+def execution_detail(task_id: str) -> dict[str, Any]:
+    task = task_manager.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Unknown execution task: {task_id}")
+    return task
+
+
+@app.post("/api/executions/{task_id}/stop")
+def stop_execution(task_id: str) -> dict[str, Any]:
+    try:
+        return task_manager.stop_task(task_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not stop execution: {exc}") from exc
+
+
+@app.post("/api/executions/{task_id}/restart")
+def restart_execution(task_id: str) -> dict[str, Any]:
+    try:
+        return task_manager.restart_task(task_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not restart execution: {exc}") from exc
 
 
 @app.get("/api/runs")
@@ -142,7 +199,11 @@ def run_url_agent(request: URLAgentRequest) -> dict[str, Any]:
     try:
         return run_url_audit(request.url, headless=request.headless, slow_mo=request.slow_mo)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"URL agent failed: {exc}") from exc
+        detail = str(exc).strip() or repr(exc) or exc.__class__.__name__
+        raise HTTPException(
+            status_code=500,
+            detail=f"URL agent failed ({exc.__class__.__name__}): {detail}",
+        ) from exc
 
 
 @app.post("/api/testlink/generate")
