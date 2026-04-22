@@ -6,3 +6,5 @@ beautifulsoup4
 python-dotenv
 openai
 testlink-api-python-client
+fastapi
+uvicorn
