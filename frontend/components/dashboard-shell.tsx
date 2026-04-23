@@ -266,6 +266,7 @@ export function DashboardShell() {
   const [error, setError] = useState("");
   const [settingsSavedMessage, setSettingsSavedMessage] = useState("");
   const [executionNotice, setExecutionNotice] = useState("");
+  const [isSendingReportEmail, setIsSendingReportEmail] = useState(false);
   const [isSheetLoading, setIsSheetLoading] = useState(false);
   const [isRunningModule, setIsRunningModule] = useState(false);
   const [isGeneratingTests, setIsGeneratingTests] = useState(false);
@@ -283,6 +284,14 @@ export function DashboardShell() {
   );
   const derivedTestlinkEnabled = Boolean(
     workspaceSettings.testlinkApiKey.trim() && workspaceSettings.testlinkUrl.trim(),
+  );
+  const smtpRecipientsList = useMemo(
+    () =>
+      workspaceSettings.smtpRecipients
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean),
+    [workspaceSettings.smtpRecipients],
   );
 
   useEffect(() => {
@@ -595,6 +604,13 @@ export function DashboardShell() {
         output_dir: generatorOutputDir.trim() || undefined,
         overwrite: generatorOverwrite,
         max_cases: Number(generatorMaxCases) > 0 ? Number(generatorMaxCases) : undefined,
+        testlink_api_key: workspaceSettings.testlinkApiKey.trim() || undefined,
+        testlink_url: workspaceSettings.testlinkUrl.trim() || undefined,
+        testlink_ca_bundle: workspaceSettings.testlinkCaBundle.trim() || undefined,
+        testlink_insecure_skip_verify: workspaceSettings.testlinkInsecureSkipVerify,
+        llm_api_key: workspaceSettings.llmApiKey.trim() || undefined,
+        llm_base_url: workspaceSettings.llmBaseUrl.trim() || undefined,
+        llm_model: workspaceSettings.llmModel.trim() || undefined,
       });
       setGenerationResult(result);
     } catch (err) {
@@ -675,6 +691,41 @@ export function DashboardShell() {
     }
   }
 
+  async function handleSendReportEmail() {
+    if (!selectedDefinition || !selectedSheetTab) {
+      setError("Select a module and sheet tab before sending the report.");
+      return;
+    }
+    if (!smtpRecipientsList.length) {
+      setError("Add at least one SMTP recipient in Workspace Settings before sending mail.");
+      setSettingsOpen(true);
+      return;
+    }
+    setError("");
+    setIsSendingReportEmail(true);
+    try {
+      const response = await api.sendSheetReportEmail({
+        module_id: selectedDefinition.id,
+        sheet_name: selectedDefinition.sheet_name,
+        tab_name: selectedSheetTab,
+        status: statusFilter,
+        browser: browserFilter,
+        start_date: startDate || undefined,
+        end_date: endDate || undefined,
+        search: searchText.trim() || undefined,
+        recipients: smtpRecipientsList,
+      });
+      showExecutionNotice(
+        `Report emailed to ${response.recipients.join(", ")} for ${response.total} filtered rows.`,
+      );
+      setActiveTab("Downloads");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not send report email.");
+    } finally {
+      setIsSendingReportEmail(false);
+    }
+  }
+
   function handleSaveSettings() {
     window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(workspaceSettings));
     setSettingsSavedMessage("Workspace settings saved successfully.");
@@ -747,6 +798,7 @@ export function DashboardShell() {
 
   function renderDownloads() {
     const filterSummary = {
+      Module: selectedDefinition?.label || "",
       Tab: selectedSheetTab,
       Status: statusFilter.join(", "),
       Browser: browserFilter.join(", "),
@@ -760,9 +812,9 @@ export function DashboardShell() {
         <SectionTitle
           icon={<Download className="h-5 w-5" />}
           title="Download Center"
-          description="Export the current filtered execution view as CSV or HTML."
+          description="Export or email the current filtered execution view."
         />
-        <div className="mt-6 grid gap-4 md:grid-cols-2">
+        <div className="mt-6 grid gap-4 md:grid-cols-3">
           <button
             type="button"
             onClick={() => downloadFile(`${selectedSheetTab || "executions"}_filtered.csv`, buildCsv(sheetRecords), "text/csv")}
@@ -785,6 +837,28 @@ export function DashboardShell() {
             <p className="font-semibold">Download HTML Report</p>
             <p className="mt-1 text-sm text-slate-500">Shareable report with filter context and table data.</p>
           </button>
+          <button
+            type="button"
+            onClick={handleSendReportEmail}
+            disabled={isSendingReportEmail || !selectedDefinition || !selectedSheetTab}
+            className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-left text-slate-900 transition hover:border-cobalt hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <p className="inline-flex items-center gap-2 font-semibold">
+              {isSendingReportEmail ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              {isSendingReportEmail ? "Sending Mail Report..." : "Send Report on Mail"}
+            </p>
+            <p className="mt-1 text-sm text-slate-500">
+              Sends the current filtered table for the selected date range to saved recipients.
+            </p>
+          </button>
+        </div>
+        <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+          <p className="font-medium text-slate-900">Mail Recipients</p>
+          <p className="mt-1">
+            {smtpRecipientsList.length
+              ? smtpRecipientsList.join(", ")
+              : "No recipients saved yet. Add them in Workspace Settings to enable report mail."}
+          </p>
         </div>
       </div>
     );

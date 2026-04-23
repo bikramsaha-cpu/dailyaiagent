@@ -7,11 +7,11 @@ from playwright.sync_api import sync_playwright
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from logger_instance import logger
+from shared import DEFAULT_BMC_LOGIN_PHONE, SESSION_FILE_PATH, launch_browser
 from shared import build_page, empty_browser_results, make_log_step, open_first_contact, open_message_centre
 
-session_file_path = "/var/log/web_tester_logs/bmclogin.json"
 BROWSERS = ["chromium", "firefox"]
-MOBILE_NUMBER = "9643193481"
+MOBILE_NUMBER = DEFAULT_BMC_LOGIN_PHONE
 ATTACHMENT_PATH = "C:/Users/Lenovo/Pictures/Screenshots/Screenshot (28).png"
 test_case_name = os.path.basename(__file__).replace(".py", "")
 
@@ -23,8 +23,8 @@ def run(playwright):
 
     for browser_name in BROWSERS:
         print(f"\nRunning send attachment automation on: {browser_name}")
-        browser = getattr(playwright, browser_name).launch(headless=False, slow_mo=100)
-        context = browser.new_context(storage_state=session_file_path)
+        browser = launch_browser(playwright, browser_name)
+        context = browser.new_context(storage_state=SESSION_FILE_PATH)
         page = build_page(context.new_page(), test_name=test_case_name)
         base_log_step = make_log_step(
             page=page,
@@ -90,3 +90,4 @@ def run(playwright):
 if __name__ == "__main__":
     with sync_playwright() as playwright:
         run(playwright)
+

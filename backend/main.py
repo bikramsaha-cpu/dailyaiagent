@@ -19,6 +19,7 @@ from core.api_services import (
     list_step_events,
     read_sheet_records,
     run_module,
+    send_sheet_report_email,
     run_url_audit,
 )
 
@@ -35,11 +36,30 @@ class TestLinkRequest(BaseModel):
     output_dir: str | None = None
     overwrite: bool = False
     max_cases: int | None = Field(default=None, ge=1)
+    testlink_api_key: str | None = None
+    testlink_url: str | None = None
+    testlink_ca_bundle: str | None = None
+    testlink_insecure_skip_verify: bool | None = None
+    llm_api_key: str | None = None
+    llm_base_url: str | None = None
+    llm_model: str | None = None
 
 
 class ModuleExecutionRequest(BaseModel):
     module_id: str
     browser_mode: str = Field(default="headed", pattern="^(headed|headless)$")
+
+
+class SheetReportEmailRequest(BaseModel):
+    module_id: str
+    sheet_name: str
+    tab_name: str
+    status: list[str] = Field(default_factory=list)
+    browser: list[str] = Field(default_factory=list)
+    start_date: str | None = None
+    end_date: str | None = None
+    search: str | None = None
+    recipients: list[str] = Field(default_factory=list)
 
 
 app = FastAPI(
@@ -215,8 +235,37 @@ def generate_from_testlink(request: TestLinkRequest) -> dict[str, Any]:
             output_dir=request.output_dir,
             overwrite=request.overwrite,
             max_cases=request.max_cases,
+            testlink_api_key=request.testlink_api_key,
+            testlink_url=request.testlink_url,
+            testlink_ca_bundle=request.testlink_ca_bundle,
+            testlink_insecure_skip_verify=request.testlink_insecure_skip_verify,
+            llm_api_key=request.llm_api_key,
+            llm_base_url=request.llm_base_url,
+            llm_model=request.llm_model,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Test generation failed: {exc}") from exc
+
+
+@app.post("/api/reports/email")
+def email_filtered_report(request: SheetReportEmailRequest) -> dict[str, Any]:
+    try:
+        return send_sheet_report_email(
+            module_id=request.module_id,
+            sheet_name=request.sheet_name,
+            tab_name=request.tab_name,
+            status=request.status,
+            browser=request.browser,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            search=request.search,
+            recipients=request.recipients,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not send report email: {exc}") from exc

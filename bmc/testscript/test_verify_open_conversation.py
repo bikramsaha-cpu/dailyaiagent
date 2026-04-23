@@ -6,6 +6,7 @@ import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from logger_instance import logger
+from shared import DEFAULT_BMC_LOGIN_PHONE, SESSION_FILE_PATH, launch_browser
 from shared import (
     CONVERSATION_HEADER_SELECTOR,
     build_page,
@@ -14,9 +15,8 @@ from shared import (
     open_first_contact,
 )
 
-session_file_path = "/var/log/web_tester_logs/bmclogin.json"
 BROWSERS = ["chromium", "firefox"]
-MOBILE_NUMBER = "9643193481"
+MOBILE_NUMBER = DEFAULT_BMC_LOGIN_PHONE
 MESSAGE_CENTRE_URL = "https://buyer.indiamart.com/enquiry/messagecentre/"
 
 browser_results = empty_browser_results()
@@ -27,8 +27,8 @@ def run(playwright):
 
     for browser_name in BROWSERS:
         print(f"\nRunning automation on: {browser_name}")
-        browser = getattr(playwright, browser_name).launch(headless=False, slow_mo=100)
-        context = browser.new_context(storage_state=session_file_path)
+        browser = launch_browser(playwright, browser_name)
+        context = browser.new_context(storage_state=SESSION_FILE_PATH)
         page = build_page(context.new_page(), test_name="test_verify_open_conversation")
         log_step = make_log_step(
             page=page,
@@ -61,3 +61,4 @@ def run(playwright):
 if __name__ == "__main__":
     with sync_playwright() as playwright:
         run(playwright)
+

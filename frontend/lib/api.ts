@@ -153,6 +153,15 @@ export type ExecutionTask = {
   error?: string | null;
 };
 
+export type EmailReportResponse = {
+  sent: boolean;
+  recipients: string[];
+  total: number;
+  passed: number;
+  failed: number;
+  pass_rate: number;
+};
+
 export const api = {
   getStatus: () => request<StatusPayload>("/status"),
   getModules: () => request<ModuleItem[]>("/modules"),
@@ -228,6 +237,13 @@ export const api = {
     output_dir?: string;
     overwrite?: boolean;
     max_cases?: number;
+    testlink_api_key?: string;
+    testlink_url?: string;
+    testlink_ca_bundle?: string;
+    testlink_insecure_skip_verify?: boolean;
+    llm_api_key?: string;
+    llm_base_url?: string;
+    llm_model?: string;
   }) =>
     request<TestLinkGenerationResponse>("/testlink/generate", {
       method: "POST",
@@ -235,6 +251,21 @@ export const api = {
     }),
   runUrlAgent: (payload: { url: string; headless?: boolean; slow_mo?: number }) =>
     request<UrlAgentRunResponse>("/url-agent/run", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  sendSheetReportEmail: (payload: {
+    module_id: string;
+    sheet_name: string;
+    tab_name: string;
+    status?: string[];
+    browser?: string[];
+    start_date?: string;
+    end_date?: string;
+    search?: string;
+    recipients?: string[];
+  }) =>
+    request<EmailReportResponse>("/reports/email", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

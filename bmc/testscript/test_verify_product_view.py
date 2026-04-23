@@ -8,6 +8,7 @@ import time
 # Add parent folder for logger_instance import
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from logger_instance import logger  # Your custom logger
+from shared import launch_browser
 
 BROWSERS = ["chromium", "firefox"]
 MOBILE_NUMBER = "7385475125"
@@ -21,7 +22,7 @@ def run(playwright):
 
     for browser_name in BROWSERS:
         print(f"\nðŸ§ª Running 'Search OPC 43 Grade Cement' automation on: {browser_name}")
-        browser = getattr(playwright, browser_name).launch(headless=False, slow_mo=200)
+        browser = launch_browser(playwright, browser_name, slow_mo=200)
         context = browser.new_context()
         page = context.new_page()
 

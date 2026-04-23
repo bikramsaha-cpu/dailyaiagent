@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import smtplib
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
@@ -242,3 +243,190 @@ def send_run_report_email(summary: dict, recipients=None):
         server.login(sender_email, SMTP_PASSWORD)
         server.send_message(message)
     print("Run report email sent successfully.")
+
+
+def send_filtered_sheet_report_email(
+    *,
+    module_label: str,
+    sheet_name: str,
+    tab_name: str,
+    records: list[dict[str, str]],
+    filters: dict[str, str],
+    recipients: list[str] | None = None,
+) -> dict[str, object]:
+    sender_email = SMTP_USER or "techalerts@indiamart.com"
+    resolved_recipients = [email.strip() for email in (recipients or SMTP_RECIPIENTS or []) if email.strip()]
+    if not resolved_recipients:
+        raise ValueError("No email recipients configured. Add SMTP recipients in Workspace Settings first.")
+    if not SMTP_PASSWORD:
+        raise ValueError("SMTP password is not configured on the backend machine.")
+
+    total = len(records)
+    passed = sum(1 for row in records if (row.get("Status", "").strip().lower() == "pass"))
+    failed = sum(1 for row in records if (row.get("Status", "").strip().lower() == "fail"))
+    pass_rate = round((passed / total) * 100, 1) if total else 0.0
+    failed_records = [row for row in records if row.get("Status", "").strip().lower() == "fail"]
+    selected_date = filters.get("Start Date", "Any")
+    end_date = filters.get("End Date", "Any")
+    if selected_date in {"", "Any"} and end_date not in {"", "Any"}:
+        selected_date = end_date
+    elif end_date not in {"", "Any"} and end_date != selected_date:
+        selected_date = f"{selected_date} to {end_date}"
+
+    fail_table_rows = "".join(
+        """
+        <tr>
+            <td>{title}</td>
+            <td>{remarks}</td>
+            <td>{browser}</td>
+            <td>{phone}</td>
+            <td>{date}</td>
+            <td>{time}</td>
+        </tr>
+        """.format(
+            title=html.escape(str(record.get("Test Title", "-") or "-")),
+            remarks=html.escape(str(record.get("Remarks", "-") or "-")),
+            browser=html.escape(str(record.get("Browser", "-") or "-")),
+            phone=html.escape(str(record.get("Phone", "-") or "-")),
+            date=html.escape(str(record.get("Date", "-") or "-")),
+            time=html.escape(str(record.get("Time", "-") or "-")),
+        )
+        for record in failed_records
+    )
+
+    styles = """
+        <style>
+            body { font-family: Arial, sans-serif; color: #334155; padding: 20px; }
+            h2 { color: #0f172a; margin-bottom: 6px; }
+            .meta { color: #64748b; margin-bottom: 18px; }
+            .summary-grid { display: flex; gap: 12px; flex-wrap: wrap; margin: 18px 0; }
+            .summary-card {
+                border: 1px solid #dbe3ee;
+                border-radius: 12px;
+                padding: 14px 16px;
+                min-width: 140px;
+                background: #f8fafc;
+            }
+            .summary-card .label {
+                color: #64748b;
+                font-size: 12px;
+                text-transform: uppercase;
+                letter-spacing: 0.08em;
+            }
+            .summary-card .value {
+                color: #0f172a;
+                font-size: 24px;
+                font-weight: 700;
+                margin-top: 8px;
+            }
+            .date-card {
+                margin: 18px 0;
+                border: 1px solid #dbe3ee;
+                border-radius: 12px;
+                background: #f8fafc;
+                padding: 14px 16px;
+                width: fit-content;
+            }
+            .date-card .label {
+                color: #64748b;
+                font-size: 12px;
+                text-transform: uppercase;
+                letter-spacing: 0.08em;
+            }
+            .date-card .value {
+                color: #0f172a;
+                font-size: 18px;
+                font-weight: 700;
+                margin-top: 6px;
+            }
+            .fail-table {
+                border-collapse: collapse;
+                width: 100%;
+            }
+            .fail-table td, .fail-table th {
+                border: 1px solid #dbe3ee;
+                padding: 8px 10px;
+                text-align: left;
+                vertical-align: top;
+            }
+            .fail-table th {
+                background: #0f172a;
+                color: white;
+            }
+            .fail-table tr:nth-child(even) { background: #f8fafc; }
+            .fail-title { color: #b91c1c; margin-top: 22px; }
+            .clean-note {
+                margin-top: 22px;
+                padding: 14px 16px;
+                border-radius: 12px;
+                background: #ecfdf5;
+                border: 1px solid #bbf7d0;
+                color: #166534;
+                font-weight: 600;
+            }
+        </style>
+    """
+
+    body = f"""
+        <html>
+        <head>{styles}</head>
+        <body>
+            <h2>Daily Smoke Testing Report</h2>
+            <div class="meta">Sheet: {html.escape(sheet_name)} | Generated at {datetime.now().strftime('%d-%b-%Y %H:%M')}</div>
+            <div class="meta">Module: {html.escape(module_label)} | Tab: {html.escape(tab_name)}</div>
+
+            <div class="summary-grid">
+                <div class="summary-card"><div class="label">Filtered Total</div><div class="value">{total}</div></div>
+                <div class="summary-card"><div class="label">Filtered Passed</div><div class="value" style="color:#15803d;">{passed}</div></div>
+                <div class="summary-card"><div class="label">Filtered Failed</div><div class="value" style="color:#dc2626;">{failed}</div></div>
+                <div class="summary-card"><div class="label">Filtered Pass Rate</div><div class="value" style="color:#1d4ed8;">{pass_rate}%</div></div>
+            </div>
+
+            <div class="date-card">
+                <div class="label">Selected Date</div>
+                <div class="value">{html.escape(selected_date or 'Any')}</div>
+            </div>
+
+            {
+                f'''
+                <h3 class="fail-title">Failed Cases with Remarks</h3>
+                <table class="fail-table">
+                    <thead>
+                        <tr>
+                            <th>Test Title</th>
+                            <th>Remarks</th>
+                            <th>Browser</th>
+                            <th>Phone</th>
+                            <th>Date</th>
+                            <th>Time</th>
+                        </tr>
+                    </thead>
+                    <tbody>{fail_table_rows}</tbody>
+                </table>
+                '''
+                if failed_records
+                else '<div class="clean-note">No failed cases found in the selected filtered data.</div>'
+            }
+        </body>
+        </html>
+    """
+
+    message = MIMEMultipart()
+    message["From"] = formataddr(("QA Automation Reports", sender_email))
+    message["To"] = ",".join(resolved_recipients)
+    message["Subject"] = f"Daily Smoke Testing Report - {datetime.now().strftime('%d-%b-%Y')}"
+    message.attach(MIMEText(body, "html"))
+
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        server.starttls()
+        server.login(sender_email, SMTP_PASSWORD)
+        server.send_message(message)
+
+    return {
+        "sent": True,
+        "recipients": resolved_recipients,
+        "total": total,
+        "passed": passed,
+        "failed": failed,
+        "pass_rate": pass_rate,
+    }

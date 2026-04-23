@@ -1,8 +1,16 @@
-import asyncio
-import os
-import sys
 import time
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError, Error as PlaywrightError
+
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import sync_playwright
+
+from shared import (
+    DEFAULT_BMC_LOGIN_OTP,
+    DEFAULT_BMC_LOGIN_PHONE,
+    SESSION_FILE_PATH,
+    ensure_session_dir,
+    launch_browser,
+)
 
 
 def get_active_page(context, current_page):
@@ -53,35 +61,27 @@ def wait_for_login_success(context, page, timeout_ms=20000):
 
     raise PlaywrightTimeoutError("Login success indicators not found")
 
+
 def login_and_save_session():
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False, slow_mo=100)
+    with sync_playwright() as playwright:
+        browser = launch_browser(playwright, "chromium")
         context = browser.new_context()
         page = context.new_page()
-        # Create directory for session storage
-        session_dir = "/var/log/web_tester_logs/"
-        os.makedirs(session_dir, exist_ok=True)
+        ensure_session_dir()
 
-        # Fixed filename for reusability
-        session_file_path = os.path.join(session_dir, "bmclogin.json")
-
-        # Step 1: Go to login page
-        print("🔗 Navigating to buyer login page...")
+        print("Navigating to buyer login page...")
         page.goto("https://buyer.indiamart.com/login", timeout=60000)
 
-        # Step 2: Fill mobile number
-        print("📱 Entering mobile number...")
+        print("Entering mobile number...")
         page.wait_for_selector("input#mobilemy, input[type='tel'], input[name='mobile']", timeout=15000)
         mobile_locator = page.locator("input#mobilemy, input[type='tel'], input[name='mobile']").first
-        mobile_locator.fill("9643193481")
+        mobile_locator.fill(DEFAULT_BMC_LOGIN_PHONE)
 
-        # Step 3: Click on Send OTP
-        print("📨 Clicking 'Send OTP'...")
+        print("Clicking Send OTP...")
         page.locator("input#signInSubmitButton, button:has-text('Send OTP'), input[value='Send OTP']").first.click()
 
-        # Step 4: Auto-fill OTP instead of waiting manually
         try:
-            print("🔢 Entering OTP '1956'...")
+            print("Entering configured OTP...")
             otp_locators = [
                 "input[placeholder='----']",
                 "input[autocomplete='one-time-code']",
@@ -101,33 +101,30 @@ def login_and_save_session():
 
             if otp_input is None:
                 digit_boxes = page.locator("input[maxlength='1']")
-                if digit_boxes.count() >= 4:
-                    for index, digit in enumerate("1956"):
+                if digit_boxes.count() >= len(DEFAULT_BMC_LOGIN_OTP):
+                    for index, digit in enumerate(DEFAULT_BMC_LOGIN_OTP):
                         digit_boxes.nth(index).fill(digit)
-                    otp_input = digit_boxes.first
                 else:
                     raise PlaywrightTimeoutError("OTP input not found")
             else:
-                otp_input.fill("1956")
+                otp_input.fill(DEFAULT_BMC_LOGIN_OTP)
         except PlaywrightTimeoutError:
-            print("❌ OTP input not found.")
+            print("OTP input not found.")
             browser.close()
             return 1
 
-        # Step 5: Wait for post-login indicator.
-        # Current flow auto-submits after OTP entry, so do not wait for a removed Verify OTP CTA.
         try:
-            print("🔍 Waiting for post-login confirmation...")
+            print("Waiting for post-login confirmation...")
             try:
                 page.wait_for_load_state("domcontentloaded", timeout=15000)
             except PlaywrightError:
                 page = get_active_page(context, page)
 
             page = get_active_page(context, page)
-            page = wait_for_login_success(context, page, timeout_ms=20000)
-            print("🔐 OTP Verified and login successful.")
+            wait_for_login_success(context, page, timeout_ms=20000)
+            print("OTP verified and login successful.")
         except (PlaywrightTimeoutError, PlaywrightError):
-            print("⚠️ Login not confirmed. Session may not be saved.")
+            print("Login not confirmed. Session may not be saved.")
             try:
                 page = get_active_page(context, page)
                 page.screenshot(path="login_not_confirmed.png", full_page=True)
@@ -136,12 +133,11 @@ def login_and_save_session():
             browser.close()
             return 1
 
-        # Step 7: Save session state
-        context.storage_state(path=session_file_path)
-        print("✅ Login session saved to bmclogin.json")
-
+        context.storage_state(path=SESSION_FILE_PATH)
+        print(f"Login session saved to {SESSION_FILE_PATH}")
         browser.close()
         return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(login_and_save_session())

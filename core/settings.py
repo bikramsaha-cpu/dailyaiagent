@@ -50,8 +50,8 @@ TESTLINK_INSECURE_SKIP_VERIFY = (
 
 SMTP_HOST = os.getenv("AUTOMATION_SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("AUTOMATION_SMTP_PORT", "587"))
-SMTP_USER = os.getenv("AUTOMATION_SMTP_USER", "")
-SMTP_PASSWORD = os.getenv("AUTOMATION_SMTP_PASSWORD", "")
+SMTP_USER = os.getenv("AUTOMATION_SMTP_USER", "techalerts@indiamart.com")
+SMTP_PASSWORD = os.getenv("AUTOMATION_SMTP_PASSWORD", "utoqdasmgzvoklgf")
 SMTP_RECIPIENTS = [
     email.strip()
     for email in os.getenv(

@@ -7,9 +7,19 @@ from pathlib import Path
 from typing import Any
 
 from core.google_logger import GoogleSheetLogger
+from core.mailer import send_filtered_sheet_report_email
 from core.module_registry import get_module, load_modules
 from core.runner import ModuleRunner
-from core.settings import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, ROOT_DIR, TESTLINK_API_KEY, TESTLINK_URL
+from core.settings import (
+    LLM_API_KEY,
+    LLM_BASE_URL,
+    LLM_MODEL,
+    ROOT_DIR,
+    TESTLINK_API_KEY,
+    TESTLINK_CA_BUNDLE,
+    TESTLINK_INSECURE_SKIP_VERIFY,
+    TESTLINK_URL,
+)
 from core.store import ExecutionStore
 from core.testlink_generator import (
     TestLinkCaseGenerator,
@@ -157,12 +167,30 @@ def generate_testlink_tests(
     output_dir: str | None = None,
     overwrite: bool = False,
     max_cases: int | None = None,
+    testlink_api_key: str | None = None,
+    testlink_url: str | None = None,
+    testlink_ca_bundle: str | None = None,
+    testlink_insecure_skip_verify: bool | None = None,
+    llm_api_key: str | None = None,
+    llm_base_url: str | None = None,
+    llm_model: str | None = None,
 ) -> dict[str, Any]:
     target_dir = Path(output_dir).resolve() if output_dir else default_output_dir_for_module(module_id)
     config = TestLinkGeneratorConfig(
         suite_id=suite_id,
         module_id=module_id,
         output_dir=target_dir,
+        testlink_url=testlink_url or TESTLINK_URL,
+        testlink_api_key=testlink_api_key or TESTLINK_API_KEY,
+        llm_api_key=llm_api_key or LLM_API_KEY,
+        llm_base_url=llm_base_url or LLM_BASE_URL,
+        llm_model=llm_model or LLM_MODEL,
+        ca_bundle=testlink_ca_bundle or TESTLINK_CA_BUNDLE,
+        insecure_skip_verify=(
+            TESTLINK_INSECURE_SKIP_VERIFY
+            if testlink_insecure_skip_verify is None
+            else testlink_insecure_skip_verify
+        ),
         overwrite=overwrite,
         max_cases=max_cases,
     )
@@ -190,3 +218,45 @@ def latest_run_for_module(module_id: str) -> dict[str, Any] | None:
     module = get_module(module_id)
     runs = ExecutionStore().list_runs(limit=1, suite_name=module.suite)
     return runs[0] if runs else None
+
+
+def send_sheet_report_email(
+    *,
+    module_id: str,
+    sheet_name: str,
+    tab_name: str,
+    status: list[str] | None = None,
+    browser: list[str] | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    search: str | None = None,
+    recipients: list[str] | None = None,
+) -> dict[str, Any]:
+    module = get_module(module_id)
+    records = read_sheet_records(
+        sheet_name=sheet_name,
+        tab_name=tab_name,
+        status=status,
+        browser=browser,
+        start_date=start_date,
+        end_date=end_date,
+        search=search,
+    )
+    filters = {
+        "Module": module.label,
+        "Sheet": sheet_name,
+        "Tab": tab_name,
+        "Status": ", ".join(status or []) or "All",
+        "Browser": ", ".join(browser or []) or "All",
+        "Search": search or "All",
+        "Start Date": start_date or "Any",
+        "End Date": end_date or "Any",
+    }
+    return send_filtered_sheet_report_email(
+        module_label=module.label,
+        sheet_name=sheet_name,
+        tab_name=tab_name,
+        records=records,
+        filters=filters,
+        recipients=recipients,
+    )

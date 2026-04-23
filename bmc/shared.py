@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 from collections import defaultdict
+from pathlib import Path
 
 from core.healing import attach_healing
 from core.step_runner import run_step
@@ -33,6 +35,24 @@ MESSAGE_SEARCH_INPUT_SELECTOR = (
     "input[placeholder*='Search'], "
     "input[placeholder*='search']"
 )
+
+BMC_HEADLESS = os.getenv("AUTOMATION_BMC_HEADLESS", "1").strip().lower() not in {"0", "false", "no"}
+BMC_SLOW_MO = int(os.getenv("AUTOMATION_BMC_SLOW_MO", "100"))
+DEFAULT_BMC_LOGIN_PHONE = os.getenv("AUTOMATION_DEFAULT_LOGIN_PHONE", "9643193481")
+DEFAULT_BMC_LOGIN_OTP = os.getenv("AUTOMATION_DEFAULT_LOGIN_OTP", "1956")
+SESSION_DIR = Path(os.getenv("AUTOMATION_SESSION_DIR", str(Path(__file__).resolve().parents[1] / "artifacts" / "sessions" / "bmc")))
+SESSION_FILE_PATH = str(SESSION_DIR / "bmclogin.json")
+
+
+def ensure_session_dir():
+    SESSION_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def launch_browser(playwright, browser_name: str, *, slow_mo: int | None = None):
+    return getattr(playwright, browser_name).launch(
+        headless=BMC_HEADLESS,
+        slow_mo=BMC_SLOW_MO if slow_mo is None else slow_mo,
+    )
 
 
 def build_page(raw_page, *, test_name: str):
