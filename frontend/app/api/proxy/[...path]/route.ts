@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const API_SERVER_URL = process.env.API_SERVER_URL?.replace(/\/$/, "") || "http://127.0.0.1:8000";
+const API_SERVER_URL = process.env.API_SERVER_URL?.replace(/\/$/, "") || "http://127.0.0.1:8001";
 
 async function proxy(request: NextRequest, params: { path?: string[] }, method: string) {
   const path = (params.path || []).join("/");

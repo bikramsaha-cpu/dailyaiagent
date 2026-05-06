@@ -1,4 +1,5 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "/api/proxy";
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "/qa-ai-agent/api/proxy";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
