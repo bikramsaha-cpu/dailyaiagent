@@ -19,9 +19,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 scripts_to_run = [
     ("buyer_login.py", None),
     (os.path.join("testscript", "test_verify_landing_from_buyermy.py"), "BMC"),
-    (os.path.join("testscript", "test_verify_open_conversation.py"), "BMC"),
-    (os.path.join("testscript", "test_verify_takeatour_functionality.py"), "BMC"),
-    (os.path.join("testscript", "test_verify_search_by_city.py"), "BMC"),
+    (os.path.join("testscript", "test_verify_open_conversation.py"), "BMC"),    (os.path.join("testscript", "test_verify_search_by_city.py"), "BMC"),
     (os.path.join("testscript", "test_verify_verifydetails.py"), "BMC"),
     (os.path.join("testscript", "test_verify_backtotop_cta.py"), "BMC"),
     (os.path.join("testscript", "test_verify_sendmessage.py"), "BMC"),

@@ -10,7 +10,7 @@ from typing import Any
 from core.settings import DB_PATH
 
 
-@dataclass(slots=True)
+@dataclass
 class RunSummary:
     suite_name: str
     module_name: str

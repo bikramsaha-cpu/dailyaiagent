@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from core.workspace_settings import load_workspace_settings
+
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 ARTIFACTS_DIR = Path(os.getenv("AUTOMATION_ARTIFACTS_DIR", ROOT_DIR / "artifacts"))
@@ -15,48 +17,70 @@ MODULE_REGISTRY_PATH = ROOT_DIR / "automation_modules.json"
 DEFAULT_SHEET_NAME = os.getenv("AUTOMATION_SHEET_NAME", "Buyer Automation")
 DEFAULT_SHEET_URL = os.getenv("AUTOMATION_SHEET_URL", "")
 
-LLM_API_KEY = os.getenv("AUTOMATION_LLM_API_KEY", "") or os.getenv("LITELLM_API_KEY", "")
-LLM_BASE_URL = os.getenv("AUTOMATION_LLM_BASE_URL", "") or os.getenv(
+_WORKSPACE_SETTINGS = load_workspace_settings()
+
+
+def _setting(primary_key: str, *fallback_keys: str, default: str = "") -> str:
+    for key in (primary_key, *fallback_keys):
+        value = os.getenv(key, "").strip()
+        if value:
+            return value
+    for key in (primary_key, *fallback_keys):
+        value = str(_WORKSPACE_SETTINGS.get(key, "")).strip()
+        if value:
+            return value
+    return default
+
+
+LLM_API_KEY = _setting("AUTOMATION_LLM_API_KEY", "LITELLM_API_KEY")
+LLM_BASE_URL = _setting(
+    "AUTOMATION_LLM_BASE_URL",
     "LITELLM_API_BASE",
-    "https://imllm.intermesh.net/v1",
+    default="https://imllm.intermesh.net/v1",
 )
-LLM_MODEL = os.getenv("AUTOMATION_LLM_MODEL", "") or os.getenv("LITELLM_MODEL", "anthropic/claude-sonnet-4-6")
+LLM_MODEL = _setting(
+    "AUTOMATION_LLM_MODEL",
+    "LITELLM_MODEL",
+    default="anthropic/claude-sonnet-4-6",
+)
 DEVTOOLS_ENABLED = os.getenv("AUTOMATION_DEVTOOLS_ENABLED", "1").strip().lower() not in {"0", "false", "no"}
 DIAGNOSTICS_HTML_LIMIT = int(os.getenv("AUTOMATION_DIAGNOSTICS_HTML_LIMIT", "4000"))
-DEFAULT_LOGIN_PHONE = os.getenv("AUTOMATION_DEFAULT_LOGIN_PHONE", "9643193481")
-DEFAULT_LOGIN_OTP = os.getenv("AUTOMATION_DEFAULT_LOGIN_OTP", "1956")
+DEFAULT_LOGIN_PHONE = _setting("AUTOMATION_DEFAULT_LOGIN_PHONE", default="9643193481")
+DEFAULT_LOGIN_OTP = _setting("AUTOMATION_DEFAULT_LOGIN_OTP", default="1956")
 URL_AGENT_MAX_LINKS = int(os.getenv("AUTOMATION_URL_AGENT_MAX_LINKS", "3"))
 URL_AGENT_MAX_FORMS = int(os.getenv("AUTOMATION_URL_AGENT_MAX_FORMS", "3"))
 URL_AGENT_MAX_CTAS = int(os.getenv("AUTOMATION_URL_AGENT_MAX_CTAS", "3"))
 
-TESTLINK_API_KEY = os.getenv("AUTOMATION_TESTLINK_API_KEY", "") or os.getenv("TESTLINK_API_KEY", "")
-TESTLINK_URL = os.getenv("AUTOMATION_TESTLINK_URL", "") or os.getenv(
+TESTLINK_API_KEY = _setting("AUTOMATION_TESTLINK_API_KEY", "TESTLINK_API_KEY")
+TESTLINK_URL = _setting(
+    "AUTOMATION_TESTLINK_URL",
     "TESTLINK_URL",
-    "https://testlink.intermesh.net/lib/api/xmlrpc/v1/xmlrpc.php",
+    default="https://testlink.intermesh.net/lib/api/xmlrpc/v1/xmlrpc.php",
 )
-TESTLINK_CA_BUNDLE = (
-    os.getenv("AUTOMATION_TESTLINK_CA_BUNDLE", "")
-    or os.getenv("TESTLINK_CA_BUNDLE", "")
-    or os.getenv("SSL_CERT_FILE", "")
+TESTLINK_CA_BUNDLE = _setting(
+    "AUTOMATION_TESTLINK_CA_BUNDLE",
+    "TESTLINK_CA_BUNDLE",
+    "SSL_CERT_FILE",
 )
-TESTLINK_INSECURE_SKIP_VERIFY = (
-    os.getenv("AUTOMATION_TESTLINK_INSECURE_SKIP_VERIFY", "")
-    or os.getenv("TESTLINK_INSECURE_SKIP_VERIFY", "1")
+TESTLINK_INSECURE_SKIP_VERIFY = _setting(
+    "AUTOMATION_TESTLINK_INSECURE_SKIP_VERIFY",
+    "TESTLINK_INSECURE_SKIP_VERIFY",
+    default="1",
 ).strip().lower() not in {
     "0",
     "false",
     "no",
 }
 
-SMTP_HOST = os.getenv("AUTOMATION_SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("AUTOMATION_SMTP_PORT", "587"))
-SMTP_USER = os.getenv("AUTOMATION_SMTP_USER", "techalerts@indiamart.com")
-SMTP_PASSWORD = os.getenv("AUTOMATION_SMTP_PASSWORD", "utoqdasmgzvoklgf")
+SMTP_HOST = _setting("AUTOMATION_SMTP_HOST", default="smtp.gmail.com")
+SMTP_PORT = int(_setting("AUTOMATION_SMTP_PORT", default="587"))
+SMTP_USER = _setting("AUTOMATION_SMTP_USER", default="techalerts@indiamart.com")
+SMTP_PASSWORD = _setting("AUTOMATION_SMTP_PASSWORD", default="utoqdasmgzvoklgf")
 SMTP_RECIPIENTS = [
     email.strip()
-    for email in os.getenv(
+    for email in _setting(
         "AUTOMATION_SMTP_RECIPIENTS",
-        "bikram.saha@indiamart.com"
+        default="bikram.saha@indiamart.com"
     ).split(",")
     if email.strip()
 ]

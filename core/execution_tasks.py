@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from core.settings import ROOT_DIR
+from core.workspace_settings import load_workspace_settings
 
 
 @dataclass
@@ -42,28 +43,48 @@ class ExecutionTaskManager:
         self._lock = threading.Lock()
         self._tasks: dict[str, ManagedExecution] = {}
         self._procs: dict[str, subprocess.Popen[str]] = {}
+        self._env_overrides: dict[str, dict[str, str]] = {}
 
-    def start_module(self, module_id: str, *, browser_mode: str = "headed") -> dict[str, Any]:
+    def start_module(
+        self,
+        module_id: str,
+        *,
+        browser_mode: str = "headed",
+        selected_tests: list[str] | None = None,
+        env_overrides: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         command = [sys.executable, str((ROOT_DIR / "run_module_task.py").resolve()), "--module-id", module_id]
+        for test in selected_tests or []:
+            command.extend(["--tests", test])
         if browser_mode == "headed":
             command.append("--headed")
         return self._start_task(
             kind="module",
             title=f"Module: {module_id}",
             command=command,
-            payload={"module_id": module_id, "browser_mode": browser_mode},
+            payload={"module_id": module_id, "browser_mode": browser_mode, "selected_tests": selected_tests or []},
             browser_mode=browser_mode,
+            env_overrides=env_overrides,
         )
 
-    def start_url_agent(self, url: str, *, headless: bool = False, slow_mo: int = 100) -> dict[str, Any]:
+    def start_url_agent(
+        self,
+        url: str,
+        *,
+        headless: bool = False,
+        slow_mo: int = 100,
+        visual_guard: bool = True,
+    ) -> dict[str, Any]:
         command = [sys.executable, str((ROOT_DIR / "run_url_agent.py").resolve()), "--url", url, "--slow-mo", str(slow_mo)]
         if headless:
             command.append("--headless")
+        if visual_guard:
+            command.append("--visual-guard")
         return self._start_task(
             kind="url_agent",
             title=f"URL Agent: {url}",
             command=command,
-            payload={"url": url, "headless": headless, "slow_mo": slow_mo},
+            payload={"url": url, "headless": headless, "slow_mo": slow_mo, "visual_guard": visual_guard},
             browser_mode="headless" if headless else "headed",
         )
 
@@ -105,12 +126,19 @@ class ExecutionTaskManager:
         if task.status == "running":
             self.stop_task(task_id)
         if task.kind == "module":
-            return self.start_module(task.payload["module_id"], browser_mode=task.payload.get("browser_mode", "headed"))
+            env_overrides = self._env_overrides.get(task_id, {})
+            return self.start_module(
+                task.payload["module_id"],
+                browser_mode=task.payload.get("browser_mode", "headed"),
+                selected_tests=list(task.payload.get("selected_tests", [])),
+                env_overrides=env_overrides,
+            )
         if task.kind == "url_agent":
             return self.start_url_agent(
                 task.payload["url"],
                 headless=bool(task.payload.get("headless", False)),
                 slow_mo=int(task.payload.get("slow_mo", 100)),
+                visual_guard=bool(task.payload.get("visual_guard", True)),
             )
         raise KeyError(f"Unsupported task kind: {task.kind}")
 
@@ -122,9 +150,16 @@ class ExecutionTaskManager:
         command: list[str],
         payload: dict[str, Any],
         browser_mode: str,
+        env_overrides: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         task_id = uuid.uuid4().hex
         env = {**os.environ, "PYTHONUTF8": "1"}
+        workspace_settings = load_workspace_settings()
+        for key, value in workspace_settings.items():
+            if key.startswith("AUTOMATION_") and value and not env.get(key):
+                env[key] = value
+        env_overrides = {key: value for key, value in (env_overrides or {}).items() if value}
+        env.update(env_overrides)
         proc = subprocess.Popen(
             command,
             cwd=str(ROOT_DIR),
@@ -143,12 +178,15 @@ class ExecutionTaskManager:
             browser_mode=browser_mode,
             command=command,
             cwd=str(ROOT_DIR),
+            env_overrides=self._masked_env_overrides(env_overrides),
             payload=payload,
             pid=proc.pid,
         )
         with self._lock:
             self._tasks[task_id] = task
             self._procs[task_id] = proc
+            if env_overrides:
+                self._env_overrides[task_id] = dict(env_overrides)
         watcher = threading.Thread(target=self._watch_task, args=(task_id,), daemon=True)
         watcher.start()
         return task.as_payload()
@@ -206,6 +244,17 @@ class ExecutionTaskManager:
             if candidate:
                 return str(candidate)
         return "Execution failed."
+
+    @staticmethod
+    def _masked_env_overrides(env_overrides: dict[str, str]) -> dict[str, str]:
+        masked: dict[str, str] = {}
+        sensitive_tokens = ("KEY", "PASSWORD", "TOKEN", "SECRET", "OTP")
+        for key, value in env_overrides.items():
+            if any(token in key.upper() for token in sensitive_tokens):
+                masked[key] = "***" if value else ""
+            else:
+                masked[key] = value
+        return masked
 
     @staticmethod
     def _terminate_process_tree(pid: int | None, *, force: bool = False) -> None:

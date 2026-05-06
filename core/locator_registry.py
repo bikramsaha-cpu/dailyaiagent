@@ -11,7 +11,7 @@ from core.settings import ARTIFACTS_DIR
 REGISTRY_PATH = ARTIFACTS_DIR / "locator_registry.json"
 
 
-@dataclass(slots=True)
+@dataclass
 class RegistryEntry:
     selector: str
     strategy: str

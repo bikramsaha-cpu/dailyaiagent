@@ -13,7 +13,7 @@ from core.settings import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
 from core.store import ExecutionStore
 
 
-@dataclass(slots=True)
+@dataclass
 class LocatorSpec:
     name: str
     selectors: Sequence[str]

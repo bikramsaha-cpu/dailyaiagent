@@ -20,7 +20,7 @@ class URLAuditAgent:
     def __init__(self, store: ExecutionStore | None = None):
         self.store = store or ExecutionStore()
 
-    def run(self, url: str, *, headless: bool = False, slow_mo: int = 100) -> dict[str, Any]:
+    def run(self, url: str, *, headless: bool = False, slow_mo: int = 100, visual_guard: bool = True) -> dict[str, Any]:
         started_at = datetime.now().isoformat(timespec="seconds")
         artifact_dir = self._artifact_dir(url)
         screenshot_path = artifact_dir / "page.png"
@@ -45,16 +45,18 @@ class URLAuditAgent:
                 diagnostics = collect_page_diagnostics(page, action="url_audit", locator_name="page", intent="page audit")
                 summary = self._extract_page_summary(page)
                 planned = self._plan_cases(summary, diagnostics, url)
-                executed = [login_case] + self._execute_cases(browser, url, planned, artifact_dir, state_path)
+                visual_cases, visual_findings = self._run_visual_guard(page, summary, diagnostics) if visual_guard else ([], [])
+                executed = [login_case] + visual_cases + self._execute_cases(browser, url, planned, artifact_dir, state_path)
                 context.close()
                 browser.close()
         except Exception as exc:
             detail = str(exc).strip() or repr(exc) or exc.__class__.__name__
             raise RuntimeError(f"Could not start or run Playwright URL audit. {exc.__class__.__name__}: {detail}") from exc
 
-        findings = self._findings(summary, diagnostics, executed)
+        findings = self._findings(summary, diagnostics, executed) + visual_findings
         human_required = self._human_required(summary, diagnostics, executed)
         counts = self._case_counts(executed)
+        visual_summary = self._visual_summary(visual_cases)
         finished_at = datetime.now().isoformat(timespec="seconds")
         status = "Fail" if counts["Fail"] else ("Needs Review" if counts["Needs Review"] or human_required else "Pass")
         run = RunSummary(
@@ -75,6 +77,9 @@ class URLAuditAgent:
                 "screenshot_path": str(screenshot_path),
                 "page_summary": summary,
                 "diagnostics": diagnostics,
+                "visual_guard_enabled": visual_guard,
+                "visual_summary": visual_summary,
+                "visual_findings": visual_findings,
                 "findings": findings,
                 "test_cases": executed,
                 "human_required": human_required,
@@ -87,6 +92,136 @@ class URLAuditAgent:
         payload = asdict(run)
         payload["id"] = run_id
         return payload
+
+    def _run_visual_guard(self, page, summary: dict[str, Any], diagnostics: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
+        report = page.evaluate(
+            """
+            () => {
+              const isVisible = (el) => {
+                if (!el) return false;
+                const style = window.getComputedStyle(el);
+                const rect = el.getBoundingClientRect();
+                return style.visibility !== 'hidden' &&
+                  style.display !== 'none' &&
+                  Number(style.opacity || '1') > 0.05 &&
+                  rect.width > 8 &&
+                  rect.height > 8;
+              };
+              const imgs = Array.from(document.images || []);
+              const brokenImages = imgs
+                .filter((img) => !img.complete || !img.naturalWidth || !img.naturalHeight)
+                .slice(0, 10)
+                .map((img) => img.currentSrc || img.src || img.alt || 'image');
+              const zeroImages = imgs
+                .filter((img) => img.complete && img.naturalWidth && img.naturalHeight && (img.clientWidth < 8 || img.clientHeight < 8))
+                .slice(0, 10)
+                .map((img) => img.currentSrc || img.src || img.alt || 'image');
+              const headings = Array.from(document.querySelectorAll('h1,h2'))
+                .filter(isVisible)
+                .slice(0, 5)
+                .map((el) => (el.innerText || '').replace(/\\s+/g, ' ').trim())
+                .filter(Boolean);
+              const ctas = Array.from(document.querySelectorAll('button, a[href], [role="button"], input[type="submit"]'))
+                .filter(isVisible)
+                .slice(0, 8)
+                .map((el) => (el.innerText || el.value || el.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim())
+                .filter(Boolean);
+              const largeOverlays = Array.from(document.body.querySelectorAll('*'))
+                .filter((el) => {
+                  const style = window.getComputedStyle(el);
+                  const rect = el.getBoundingClientRect();
+                  const ratio = (rect.width * rect.height) / Math.max(window.innerWidth * window.innerHeight, 1);
+                  return (style.position === 'fixed' || style.position === 'sticky') && ratio > 0.2 && isVisible(el);
+                })
+                .slice(0, 6)
+                .map((el) => `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ''}${el.className ? '.' + String(el.className).trim().split(/\\s+/).slice(0,2).join('.') : ''}`);
+              const mainCandidate = document.querySelector('main, [role="main"], #content, .content, .container');
+              const bodyText = (document.body?.innerText || '').replace(/\\s+/g, ' ').trim();
+              return {
+                brokenImages,
+                zeroImages,
+                visibleHeadings: headings,
+                visibleCtas: ctas,
+                largeOverlays,
+                hasVisibleMain: isVisible(mainCandidate) || headings.length > 0 || bodyText.length > 120,
+                bodyTextLength: bodyText.length
+              };
+            }
+            """
+        )
+        cases: list[dict[str, Any]] = []
+        findings: list[str] = []
+
+        broken_images = report.get("brokenImages") or []
+        cases.append({
+            "id": "visual_broken_images",
+            "title": "Visual Guard: broken image scan",
+            "objective": "Detect missing or failed image assets on the page.",
+            "status": "Fail" if broken_images else "Pass",
+            "details": f"Detected {len(broken_images)} broken image candidate(s)." if broken_images else "No broken image candidates detected.",
+            "evidence": ", ".join(broken_images[:3]) if broken_images else "All sampled images loaded.",
+        })
+        if broken_images:
+            findings.append(f"Visual guard found {len(broken_images)} broken image candidate(s).")
+
+        large_overlays = report.get("largeOverlays") or []
+        overlay_problem = bool(large_overlays or diagnostics.get("interceptors"))
+        cases.append({
+            "id": "visual_overlay_check",
+            "title": "Visual Guard: blocking overlay check",
+            "objective": "Detect large fixed overlays or popup layers that can hide content.",
+            "status": "Needs Review" if overlay_problem else "Pass",
+            "details": "Large overlay-like elements are present." if overlay_problem else "No large overlay blockers were detected.",
+            "evidence": ", ".join(large_overlays[:3]) if large_overlays else "Clean viewport",
+        })
+        if overlay_problem:
+            findings.append("Visual guard detected overlay-style elements that may hide page content.")
+
+        has_visible_main = bool(report.get("hasVisibleMain"))
+        cases.append({
+            "id": "visual_primary_content",
+            "title": "Visual Guard: primary content visibility",
+            "objective": "Check that the page has visible main content, headings, or readable body text.",
+            "status": "Pass" if has_visible_main else "Fail",
+            "details": "Primary content appears visually present." if has_visible_main else "The page looks visually sparse or the main content may not be visible.",
+            "evidence": f"Headings: {len(report.get('visibleHeadings') or [])}, body text: {report.get('bodyTextLength', 0)} chars",
+        })
+        if not has_visible_main:
+            findings.append("Visual guard could not confirm visible primary content on the page.")
+
+        visible_ctas = report.get("visibleCtas") or []
+        cases.append({
+            "id": "visual_cta_presence",
+            "title": "Visual Guard: CTA visibility",
+            "objective": "Check whether at least one meaningful clickable action is visibly present.",
+            "status": "Pass" if visible_ctas else "Needs Review",
+            "details": "Visible CTA elements were detected." if visible_ctas else "No visible CTA/button candidates were detected.",
+            "evidence": ", ".join(visible_ctas[:3]) if visible_ctas else "No CTA snapshot",
+        })
+        if not visible_ctas:
+            findings.append("Visual guard did not detect any clear visible CTA on the page.")
+
+        zero_images = report.get("zeroImages") or []
+        if zero_images:
+            cases.append({
+                "id": "visual_collapsed_media",
+                "title": "Visual Guard: collapsed media check",
+                "objective": "Detect images that loaded but are effectively not visible in layout.",
+                "status": "Needs Review",
+                "details": f"Detected {len(zero_images)} image(s) with near-zero rendered size.",
+                "evidence": ", ".join(zero_images[:3]),
+            })
+            findings.append("Visual guard found image assets that appear collapsed or effectively hidden.")
+
+        return cases, findings
+
+    def _visual_summary(self, visual_cases: list[dict[str, Any]]) -> dict[str, int]:
+        return {
+            "executed": len(visual_cases),
+            "passed": sum(1 for case in visual_cases if case.get("status") == "Pass"),
+            "failed": sum(1 for case in visual_cases if case.get("status") == "Fail"),
+            "needs_review": sum(1 for case in visual_cases if case.get("status") == "Needs Review"),
+        }
 
     def _attempt_login(self, page, context) -> dict[str, Any]:
         result = {

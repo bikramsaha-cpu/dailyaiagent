@@ -45,6 +45,13 @@ export type ModuleItem = {
   runner: string;
 };
 
+export type ModuleTestItem = {
+  id: string;
+  label: string;
+  path: string;
+  group: string;
+};
+
 export type RunItem = {
   id: number;
   module_name: string;
@@ -130,9 +137,12 @@ export type UrlAgentRunResponse = {
   extra?: {
     url?: string;
     findings?: string[];
+    visual_findings?: string[];
     human_required?: string[];
     screenshot_path?: string;
     case_counts?: Record<string, number>;
+    visual_summary?: Record<string, number>;
+    visual_guard_enabled?: boolean;
     test_cases?: UrlAgentCase[];
   };
 };
@@ -164,6 +174,22 @@ export type EmailReportResponse = {
 
 export const api = {
   getStatus: () => request<StatusPayload>("/status"),
+  saveWorkspaceSettings: (payload: {
+    llm_api_key?: string;
+    llm_base_url?: string;
+    llm_model?: string;
+    default_login_phone?: string;
+    default_login_otp?: string;
+    testlink_api_key?: string;
+    testlink_url?: string;
+    testlink_ca_bundle?: string;
+    testlink_insecure_skip_verify?: boolean;
+    smtp_recipients?: string;
+  }) =>
+    request<{ saved: boolean; keys: string[] }>("/settings/workspace", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   getModules: () => request<ModuleItem[]>("/modules"),
   getRuns: (limit = 20, suiteName?: string) =>
     request<RunItem[]>(
@@ -209,12 +235,23 @@ export const api = {
     request<DiagnosticsHealingItem[]>(`/diagnostics/healings?limit=${limit}`),
   getDiagnosticsSteps: (limit = 100) =>
     request<DiagnosticsStepItem[]>(`/diagnostics/steps?limit=${limit}`),
-  startModuleExecution: (payload: { module_id: string; browser_mode: "headed" | "headless" }) =>
+  getModuleTests: (moduleId: string) => request<{ tests: ModuleTestItem[] }>(`/modules/${moduleId}/tests`),
+  startModuleExecution: (payload: {
+    module_id: string;
+    browser_mode: "headed" | "headless";
+    selected_tests?: string[];
+    llm_api_key?: string;
+    llm_base_url?: string;
+    llm_model?: string;
+    default_login_phone?: string;
+    default_login_otp?: string;
+    smtp_recipients?: string;
+  }) =>
     request<ExecutionTask>("/executions/module/start", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  startUrlAgentExecution: (payload: { url: string; headless?: boolean; slow_mo?: number }) =>
+  startUrlAgentExecution: (payload: { url: string; headless?: boolean; slow_mo?: number; visual_guard?: boolean }) =>
     request<ExecutionTask>("/executions/url-agent/start", {
       method: "POST",
       body: JSON.stringify(payload),
@@ -249,7 +286,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  runUrlAgent: (payload: { url: string; headless?: boolean; slow_mo?: number }) =>
+  runUrlAgent: (payload: { url: string; headless?: boolean; slow_mo?: number; visual_guard?: boolean }) =>
     request<UrlAgentRunResponse>("/url-agent/run", {
       method: "POST",
       body: JSON.stringify(payload),

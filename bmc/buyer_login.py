@@ -62,6 +62,44 @@ def wait_for_login_success(context, page, timeout_ms=20000):
     raise PlaywrightTimeoutError("Login success indicators not found")
 
 
+def fill_otp_boxes(page, otp: str) -> bool:
+    otp_digits = otp.strip()
+    if not otp_digits:
+        return False
+
+    preferred_groups = [
+        "div.nrp-otp-boxes input.nrp-otp-input",
+        ".nrp-otp-boxes input[maxlength='1']",
+        "input.nrp-otp-input",
+        "input[maxlength='1']",
+    ]
+
+    for selector in preferred_groups:
+        boxes = page.locator(selector)
+        try:
+            count = boxes.count()
+        except Exception:
+            continue
+        if count < len(otp_digits):
+            continue
+
+        for index, digit in enumerate(otp_digits):
+            box = boxes.nth(index)
+            try:
+                box.wait_for(state="visible", timeout=5000)
+                box.click()
+                box.fill("")
+                box.type(digit, delay=50)
+            except Exception:
+                try:
+                    box.fill(digit)
+                except Exception:
+                    return False
+        return True
+
+    return False
+
+
 def login_and_save_session():
     with sync_playwright() as playwright:
         browser = launch_browser(playwright, "chromium")
@@ -78,36 +116,42 @@ def login_and_save_session():
         mobile_locator.fill(DEFAULT_BMC_LOGIN_PHONE)
 
         print("Clicking Send OTP...")
-        page.locator("input#signInSubmitButton, button:has-text('Send OTP'), input[value='Send OTP']").first.click()
+        page.locator(
+            "#signInSubmitButton, button#signInSubmitButton, button:has-text('Send OTP'), input[value='Send OTP']"
+        ).first.click()
 
         try:
             print("Entering configured OTP...")
-            otp_locators = [
-                "input[placeholder='----']",
-                "input[autocomplete='one-time-code']",
-                "input[name='otp']",
-                "input[id*='otp']",
-                "input[maxlength='4']",
-            ]
-            otp_input = None
-            for selector in otp_locators:
-                loc = page.locator(selector)
-                try:
-                    if loc.count() and loc.first.is_visible():
-                        otp_input = loc.first
-                        break
-                except Exception:
-                    continue
+            page.wait_for_selector(
+                "div.nrp-otp-boxes, input.nrp-otp-input, input[maxlength='1'], input[autocomplete='one-time-code'], input[name='otp'], input[id*='otp']",
+                timeout=15000,
+            )
 
-            if otp_input is None:
-                digit_boxes = page.locator("input[maxlength='1']")
-                if digit_boxes.count() >= len(DEFAULT_BMC_LOGIN_OTP):
-                    for index, digit in enumerate(DEFAULT_BMC_LOGIN_OTP):
-                        digit_boxes.nth(index).fill(digit)
-                else:
+            if not fill_otp_boxes(page, DEFAULT_BMC_LOGIN_OTP):
+                otp_locators = [
+                    "input[placeholder='----']",
+                    "input[autocomplete='one-time-code']",
+                    "input[name='otp']",
+                    "input[id*='otp']",
+                    "input[maxlength='4']",
+                ]
+                otp_input = None
+                for selector in otp_locators:
+                    loc = page.locator(selector)
+                    try:
+                        if loc.count() and loc.first.is_visible():
+                            otp_input = loc.first
+                            break
+                    except Exception:
+                        continue
+
+                if otp_input is None:
                     raise PlaywrightTimeoutError("OTP input not found")
-            else:
+
+                otp_input.click()
                 otp_input.fill(DEFAULT_BMC_LOGIN_OTP)
+
+            page.wait_for_timeout(1500)
         except PlaywrightTimeoutError:
             print("OTP input not found.")
             browser.close()

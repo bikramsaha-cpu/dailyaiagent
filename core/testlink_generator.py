@@ -20,7 +20,7 @@ from core import settings as core_settings
 log = logging.getLogger(__name__)
 
 
-@dataclass(slots=True)
+@dataclass
 class GenerationResult:
     title: str
     output_path: Path | None
@@ -28,7 +28,7 @@ class GenerationResult:
     detail: str = ""
 
 
-@dataclass(slots=True)
+@dataclass
 class TestLinkGeneratorConfig:
     suite_id: int
     module_id: str

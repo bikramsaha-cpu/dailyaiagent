@@ -7,7 +7,7 @@ from pathlib import Path
 from core.settings import DEFAULT_SHEET_NAME, MODULE_REGISTRY_PATH, ROOT_DIR
 
 
-@dataclass(slots=True)
+@dataclass
 class ModuleDefinition:
     id: str
     label: str
@@ -21,6 +21,10 @@ class ModuleDefinition:
     @property
     def runner_path(self) -> Path:
         return (ROOT_DIR / self.runner).resolve()
+
+    @property
+    def module_dir(self) -> Path:
+        return self.runner_path.parent
 
 
 def load_modules(path: str | Path = MODULE_REGISTRY_PATH) -> list[ModuleDefinition]:

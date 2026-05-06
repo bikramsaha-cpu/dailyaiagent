@@ -29,6 +29,7 @@ import {
   DiagnosticsStepItem,
   ExecutionTask,
   ModuleItem,
+  ModuleTestItem,
   RunItem,
   SheetRecord,
   StatusPayload,
@@ -261,7 +262,12 @@ export function DashboardShell() {
   const [generationResult, setGenerationResult] = useState<TestLinkGenerationResponse | null>(null);
   const [urlAgentInput, setUrlAgentInput] = useState("https://example.com");
   const [urlAgentHeadless, setUrlAgentHeadless] = useState(false);
+  const [urlAgentVisualGuard, setUrlAgentVisualGuard] = useState(true);
   const [moduleBrowserMode, setModuleBrowserMode] = useState<"headed" | "headless">("headed");
+  const [moduleTests, setModuleTests] = useState<ModuleTestItem[]>([]);
+  const [selectedModuleTests, setSelectedModuleTests] = useState<string[]>([]);
+  const [isTestPickerOpen, setIsTestPickerOpen] = useState(false);
+  const [isLoadingModuleTests, setIsLoadingModuleTests] = useState(false);
   const [urlAgentResult, setUrlAgentResult] = useState<UrlAgentRunResponse | null>(null);
   const [error, setError] = useState("");
   const [settingsSavedMessage, setSettingsSavedMessage] = useState("");
@@ -292,6 +298,13 @@ export function DashboardShell() {
         .map((value) => value.trim())
         .filter(Boolean),
     [workspaceSettings.smtpRecipients],
+  );
+  const selectedModuleTestNames = useMemo(
+    () =>
+      moduleTests
+        .filter((item) => selectedModuleTests.includes(item.path))
+        .map((item) => item.label),
+    [moduleTests, selectedModuleTests],
   );
 
   useEffect(() => {
@@ -376,6 +389,8 @@ export function DashboardShell() {
   useEffect(() => {
     setSelectedSheetTab("");
     setRawSheetRecords([]);
+    setModuleTests([]);
+    setSelectedModuleTests([]);
     if (!selectedDefinition) {
       return;
     }
@@ -403,6 +418,25 @@ export function DashboardShell() {
       }
     };
     void loadTabs();
+  }, [selectedDefinition]);
+
+  useEffect(() => {
+    if (!selectedDefinition) {
+      return;
+    }
+    const loadModuleTests = async () => {
+      setIsLoadingModuleTests(true);
+      try {
+        const payload = await api.getModuleTests(selectedDefinition.id);
+        setModuleTests(payload.tests);
+      } catch (err) {
+        setModuleTests([]);
+        setError(err instanceof Error ? err.message : "Could not load module test cases.");
+      } finally {
+        setIsLoadingModuleTests(false);
+      }
+    };
+    void loadModuleTests();
   }, [selectedDefinition]);
 
   useEffect(() => {
@@ -539,7 +573,7 @@ export function DashboardShell() {
 
   const activeExecutionLabel = useMemo(() => {
     if (isRunningUrlAgent) {
-      return `Running URL agent in ${urlAgentHeadless ? "headless" : "headed"} mode and collecting page evidence...`;
+      return `Running URL agent in ${urlAgentHeadless ? "headless" : "headed"} mode${urlAgentVisualGuard ? " with visual guard" : ""} and collecting page evidence...`;
     }
     if (isGeneratingTests) {
       return "Generating tests from TestLink...";
@@ -551,7 +585,7 @@ export function DashboardShell() {
       return "Refreshing dashboard data...";
     }
     return "";
-  }, [isGeneratingTests, isRunningModule, isRunningUrlAgent, isSheetLoading]);
+  }, [isGeneratingTests, isRunningModule, isRunningUrlAgent, isSheetLoading, urlAgentHeadless, urlAgentVisualGuard]);
 
   function toggleFilterValue(values: string[], value: string) {
     return values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
@@ -569,6 +603,12 @@ export function DashboardShell() {
     setEndDate(dates[dates.length - 1] || "");
   }
 
+  function toggleModuleTest(path: string) {
+    setSelectedModuleTests((current) =>
+      current.includes(path) ? current.filter((item) => item !== path) : [...current, path],
+    );
+  }
+
   async function handleRunModule() {
     if (!selectedDefinition) {
       return;
@@ -579,8 +619,16 @@ export function DashboardShell() {
       const task = await api.startModuleExecution({
         module_id: selectedDefinition.id,
         browser_mode: moduleBrowserMode,
+        selected_tests: selectedModuleTests,
+        llm_api_key: workspaceSettings.llmApiKey.trim() || undefined,
+        llm_base_url: workspaceSettings.llmBaseUrl.trim() || undefined,
+        llm_model: workspaceSettings.llmModel.trim() || undefined,
+        default_login_phone: workspaceSettings.defaultPhone.trim() || undefined,
+        default_login_otp: workspaceSettings.defaultOtp.trim() || undefined,
+        smtp_recipients: workspaceSettings.smtpRecipients.trim() || undefined,
       });
       setActiveTask(task);
+      setIsTestPickerOpen(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Module run failed.");
       setIsRunningModule(false);
@@ -632,6 +680,7 @@ export function DashboardShell() {
         url: urlAgentInput.trim(),
         headless: urlAgentHeadless,
         slow_mo: 100,
+        visual_guard: urlAgentVisualGuard,
       });
       setActiveTask(task);
     } catch (err) {
@@ -726,12 +775,35 @@ export function DashboardShell() {
     }
   }
 
-  function handleSaveSettings() {
+  async function handleSaveSettings() {
     window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(workspaceSettings));
-    setSettingsSavedMessage("Workspace settings saved successfully.");
+    setError("");
+    let backendSynced = false;
+    try {
+      await api.saveWorkspaceSettings({
+        llm_api_key: workspaceSettings.llmApiKey.trim(),
+        llm_base_url: workspaceSettings.llmBaseUrl.trim(),
+        llm_model: workspaceSettings.llmModel.trim(),
+        default_login_phone: workspaceSettings.defaultPhone.trim(),
+        default_login_otp: workspaceSettings.defaultOtp.trim(),
+        testlink_api_key: workspaceSettings.testlinkApiKey.trim(),
+        testlink_url: workspaceSettings.testlinkUrl.trim(),
+        testlink_ca_bundle: workspaceSettings.testlinkCaBundle.trim(),
+        testlink_insecure_skip_verify: workspaceSettings.testlinkInsecureSkipVerify,
+        smtp_recipients: workspaceSettings.smtpRecipients.trim(),
+      });
+      backendSynced = true;
+    } catch (err) {
+      console.warn("Workspace settings backend sync skipped.", err);
+    }
+    setSettingsSavedMessage(
+      backendSynced
+        ? "Workspace settings saved successfully."
+        : "Settings saved in this browser. Module runs still use these values.",
+    );
     window.setTimeout(() => {
       setSettingsSavedMessage("");
-    }, 2500);
+    }, 3500);
   }
 
   function showExecutionNotice(message: string) {
@@ -1128,9 +1200,13 @@ export function DashboardShell() {
 
   function renderE2EAgent() {
     const caseCounts = urlAgentResult?.extra?.case_counts;
+    const visualSummary = urlAgentResult?.extra?.visual_summary;
     const testCases = urlAgentResult?.extra?.test_cases || [];
     const findings = urlAgentResult?.extra?.findings || [];
+    const visualFindings = urlAgentResult?.extra?.visual_findings || [];
     const humanRequired = urlAgentResult?.extra?.human_required || [];
+    const visualCases = testCases.filter((item) => (item.title || "").startsWith("Visual Guard:"));
+    const actionCases = testCases.filter((item) => !(item.title || "").startsWith("Visual Guard:"));
 
     return (
       <div className="space-y-6">
@@ -1154,6 +1230,14 @@ export function DashboardShell() {
               <label className="flex items-center gap-3 text-sm text-slate-600">
                 <input type="checkbox" checked={urlAgentHeadless} onChange={(event) => setUrlAgentHeadless(event.target.checked)} />
                 Headless
+              </label>
+              <label className="flex items-center gap-3 text-sm text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={urlAgentVisualGuard}
+                  onChange={(event) => setUrlAgentVisualGuard(event.target.checked)}
+                />
+                Visual Guard AI
               </label>
               <button
                 type="button"
@@ -1198,6 +1282,14 @@ export function DashboardShell() {
               <StatCard label="Failed" value={caseCounts?.Fail || 0} accent="text-rose-600" />
               <StatCard label="Needs Review" value={caseCounts?.["Needs Review"] || 0} accent="text-amber-600" />
             </div>
+            {urlAgentResult.extra?.visual_guard_enabled ? (
+              <div className="mt-4 grid gap-4 md:grid-cols-4">
+                <StatCard label="Visual Checks" value={visualSummary?.executed || 0} accent="text-slate-900" />
+                <StatCard label="Visual Pass" value={visualSummary?.passed || 0} accent="text-emerald-600" />
+                <StatCard label="Visual Fail" value={visualSummary?.failed || 0} accent="text-rose-600" />
+                <StatCard label="Visual Review" value={visualSummary?.needs_review || 0} accent="text-amber-600" />
+              </div>
+            ) : null}
             <div className="mt-6 grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
               <div className="rounded-3xl border border-slate-100 bg-slate-50 p-5">
                 <h3 className="text-lg font-semibold text-slate-900">Overall Page Assessment</h3>
@@ -1205,6 +1297,14 @@ export function DashboardShell() {
                 <div className="mt-4 space-y-2 text-sm text-slate-700">
                   {findings.length ? findings.map((item, index) => <p key={`${item}-${index}`}>- {item}</p>) : <p>No findings captured.</p>}
                 </div>
+                {urlAgentResult.extra?.visual_guard_enabled ? (
+                  <div className="mt-6">
+                    <h4 className="font-semibold text-slate-900">Visual Guard Findings</h4>
+                    <div className="mt-2 space-y-2 text-sm text-slate-700">
+                      {visualFindings.length ? visualFindings.map((item, index) => <p key={`${item}-${index}`}>- {item}</p>) : <p>No visual issues detected.</p>}
+                    </div>
+                  </div>
+                ) : null}
                 <div className="mt-6">
                   <h4 className="font-semibold text-slate-900">Human Intervention</h4>
                   <div className="mt-2 space-y-2 text-sm text-slate-700">
@@ -1212,8 +1312,37 @@ export function DashboardShell() {
                   </div>
                 </div>
               </div>
-              <div className="overflow-hidden rounded-3xl border border-slate-100">
-                <div className="max-h-[420px] overflow-auto">
+              <div className="space-y-5">
+                {visualCases.length ? (
+                  <div className="overflow-hidden rounded-3xl border border-slate-100">
+                    <div className="border-b border-slate-100 bg-slate-50 px-4 py-3">
+                      <h4 className="font-semibold text-slate-900">Visual Guard Checks</h4>
+                    </div>
+                    <div className="max-h-[220px] overflow-auto">
+                      <table className="min-w-full divide-y divide-slate-100 text-sm">
+                        <thead className="bg-slate-50">
+                          <tr className="text-left text-slate-500">
+                            <th className="px-4 py-3 font-medium">Check</th>
+                            <th className="px-4 py-3 font-medium">Status</th>
+                            <th className="px-4 py-3 font-medium">Details</th>
+                            <th className="px-4 py-3 font-medium">Evidence</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 bg-white">
+                          {visualCases.map((item, index) => (
+                            <tr key={`${item.title || "visual"}-${index}`}>
+                              <td className="px-4 py-3">{item.title || "-"}</td>
+                              <td className="px-4 py-3">{item.status || "-"}</td>
+                              <td className="px-4 py-3">{item.details || "-"}</td>
+                              <td className="px-4 py-3">{item.evidence || "-"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : null}
+                <div className="overflow-hidden rounded-3xl border border-slate-100">
                   <table className="min-w-full divide-y divide-slate-100 text-sm">
                     <thead className="bg-slate-50">
                       <tr className="text-left text-slate-500">
@@ -1224,7 +1353,7 @@ export function DashboardShell() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 bg-white">
-                      {testCases.map((item, index) => (
+                      {actionCases.map((item, index) => (
                         <tr key={`${item.title || "case"}-${index}`}>
                           <td className="px-4 py-3">{item.title || "-"}</td>
                           <td className="px-4 py-3">{item.status || "-"}</td>
@@ -1232,6 +1361,13 @@ export function DashboardShell() {
                           <td className="px-4 py-3">{item.evidence || "-"}</td>
                         </tr>
                       ))}
+                      {actionCases.length === 0 ? (
+                        <tr>
+                          <td className="px-4 py-6 text-slate-500" colSpan={4}>
+                            No non-visual exploratory cases were executed.
+                          </td>
+                        </tr>
+                      ) : null}
                     </tbody>
                   </table>
                 </div>
@@ -1402,6 +1538,19 @@ export function DashboardShell() {
                     <div className="grid gap-3">
                       <button
                         type="button"
+                        onClick={() => setIsTestPickerOpen(true)}
+                        disabled={!selectedDefinition || isLoadingModuleTests || !moduleTests.length}
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-sm font-semibold text-slate-800 transition hover:border-cobalt hover:text-cobalt disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {isLoadingModuleTests ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <TableProperties className="h-5 w-5" />}
+                        {selectedModuleTests.length
+                          ? `Selected ${selectedModuleTests.length} Test Case${selectedModuleTests.length > 1 ? "s" : ""}`
+                          : moduleTests.length
+                            ? "Choose Test Cases"
+                            : "No Test Cases Found"}
+                      </button>
+                      <button
+                        type="button"
                         onClick={handleRunModule}
                         disabled={isRunningModule || !selectedDefinition}
                         className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#2a56ff,_#1ca7d8)] px-5 py-4 text-base font-semibold text-white shadow-lg shadow-cyanflash/20 transition hover:translate-y-[-1px] disabled:cursor-not-allowed disabled:opacity-60"
@@ -1431,6 +1580,17 @@ export function DashboardShell() {
                         </div>
                       ) : null}
                     </div>
+
+                    {selectedModuleTests.length ? (
+                      <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-slate-700">
+                        <p>Execution mode: only the selected test cases will run without forcing login again if a saved session already exists.</p>
+                        <p className="mt-2 text-xs text-slate-500">{selectedModuleTestNames.join(", ")}</p>
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                        Execution mode: the full module will run.
+                      </div>
+                    )}
 
                     {selectedDefinition ? (
                       <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 text-sm text-slate-600">
@@ -1715,6 +1875,121 @@ export function DashboardShell() {
           </div>
         </section>
       </div>
+      {isTestPickerOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 px-4 py-8 backdrop-blur-sm">
+          <div className="flex max-h-[85vh] w-full max-w-4xl flex-col overflow-hidden rounded-[32px] border border-slate-200/80 bg-white shadow-2xl">
+            <div className="flex items-center justify-between gap-4 border-b border-slate-100 px-6 py-5">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Module Test Picker</p>
+                <h3 className="mt-1 text-xl font-semibold text-slate-900">
+                  {selectedDefinition?.label || "Selected module"} test cases
+                </h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  Select all cases or just one or two from the module runner. Keep selection empty if you want to run the whole module.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsTestPickerOpen(false)}
+                className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700 transition hover:border-cobalt hover:text-cobalt"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-6 py-4">
+              <button
+                type="button"
+                onClick={() => setSelectedModuleTests(moduleTests.map((item) => item.path))}
+                disabled={!moduleTests.length}
+                className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-cobalt hover:text-cobalt disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Select All
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedModuleTests([])}
+                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-cobalt hover:text-cobalt"
+              >
+                Clear Selection
+              </button>
+              <div className="rounded-full bg-blue-50 px-4 py-2 text-sm text-slate-700">
+                {selectedModuleTests.length
+                  ? `${selectedModuleTests.length} selected`
+                  : "Full module run remains active"}
+              </div>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-auto px-6 py-4">
+              {isLoadingModuleTests ? (
+                <div className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-4 text-sm text-slate-600">
+                  <LoaderCircle className="h-4 w-4 animate-spin text-cobalt" />
+                  Loading available test cases...
+                </div>
+              ) : moduleTests.length ? (
+                <div className="overflow-hidden rounded-3xl border border-slate-100">
+                  <div className="grid grid-cols-[56px_minmax(0,1fr)] border-b border-slate-100 bg-slate-50 px-4 py-3 text-left text-sm font-medium text-slate-500">
+                    <div>Pick</div>
+                    <div>Test Case</div>
+                  </div>
+                  <div className="divide-y divide-slate-100 bg-white">
+                    {moduleTests.map((item) => {
+                      const selected = selectedModuleTests.includes(item.path);
+                      return (
+                        <label
+                          key={item.id}
+                          className={`grid cursor-pointer grid-cols-[56px_minmax(0,1fr)] items-start gap-3 px-4 py-4 transition ${
+                            selected ? "bg-blue-50/40" : "hover:bg-slate-50/80"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selected}
+                            onChange={() => toggleModuleTest(item.path)}
+                            className="mt-1 h-5 w-5 rounded border-slate-300 text-cobalt"
+                          />
+                          <div className="min-w-0">
+                            <p className="break-words text-base font-semibold text-slate-900">{item.label}</p>
+                            <p className="mt-1 break-all font-mono text-xs text-slate-500">{item.path}</p>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-4 text-sm text-slate-600">
+                  No runnable test files were found for this module yet.
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-6 py-5">
+              <p className="text-sm text-slate-500">
+                Existing saved login session will be reused. Login bootstrap only runs if the session file is missing.
+              </p>
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsTestPickerOpen(false)}
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-cobalt hover:text-cobalt"
+                >
+                  Done
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRunModule}
+                  disabled={isRunningModule || !selectedDefinition}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#2a56ff,_#1ca7d8)] px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-cyanflash/20 transition hover:translate-y-[-1px] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isRunningModule ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CirclePlay className="h-4 w-4" />}
+                  {selectedModuleTests.length ? "Run Selected Test Cases" : "Run Full Module"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

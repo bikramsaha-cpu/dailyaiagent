@@ -18,6 +18,15 @@
     "default_tab": "ENQ"
   },
   {
+    "id": "recommendation",
+    "label": "Recommendation Desktop",
+    "suite": "Recommendation",
+    "runner": "recommendation/run_all.py",
+    "description": "Runs PDP, DIR, Search, and Company recommendation-card validation flows",
+    "sheet_name": "Buyer Automation",
+    "default_tab": "Recommendation"
+  },
+  {
     "id": "bmc",
     "label": "BMC Desktop",
     "suite": "BMC",

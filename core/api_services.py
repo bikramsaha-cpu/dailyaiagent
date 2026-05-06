@@ -26,6 +26,7 @@ from core.testlink_generator import (
     TestLinkGeneratorConfig,
     default_output_dir_for_module,
 )
+from core.workspace_settings import load_workspace_settings
 
 
 def list_modules_payload() -> list[dict[str, Any]]:
@@ -57,19 +58,25 @@ def get_module_payload(module_id: str) -> dict[str, Any]:
 
 
 def get_status_payload() -> dict[str, Any]:
-    ai_enabled = bool(LLM_API_KEY and LLM_BASE_URL and LLM_MODEL)
-    testlink_enabled = bool(TESTLINK_API_KEY and TESTLINK_URL)
+    workspace_settings = load_workspace_settings()
+    llm_api_key = workspace_settings.get("AUTOMATION_LLM_API_KEY", "") or LLM_API_KEY
+    llm_base_url = workspace_settings.get("AUTOMATION_LLM_BASE_URL", "") or LLM_BASE_URL
+    llm_model = workspace_settings.get("AUTOMATION_LLM_MODEL", "") or LLM_MODEL
+    testlink_api_key = workspace_settings.get("AUTOMATION_TESTLINK_API_KEY", "") or TESTLINK_API_KEY
+    testlink_url = workspace_settings.get("AUTOMATION_TESTLINK_URL", "") or TESTLINK_URL
+    ai_enabled = bool(llm_api_key and llm_base_url and llm_model)
+    testlink_enabled = bool(testlink_api_key and testlink_url)
     return {
         "ai": {
             "enabled": ai_enabled,
             "label": "Enabled" if ai_enabled else "Disabled",
-            "base_url": LLM_BASE_URL or "",
-            "model": LLM_MODEL or "",
+            "base_url": llm_base_url or "",
+            "model": llm_model or "",
         },
         "testlink": {
             "enabled": testlink_enabled,
             "label": "Configured" if testlink_enabled else "Missing Config",
-            "url": TESTLINK_URL or "",
+            "url": testlink_url or "",
         },
     }
 
@@ -116,10 +123,16 @@ def run_module(module_id: str) -> dict[str, Any]:
     return ModuleRunner().run_module(module_id)
 
 
-def run_url_audit(url: str, *, headless: bool = False, slow_mo: int = 100) -> dict[str, Any]:
+def list_module_tests(module_id: str) -> list[dict[str, str]]:
+    return ModuleRunner().list_module_tests(module_id)
+
+
+def run_url_audit(url: str, *, headless: bool = False, slow_mo: int = 100, visual_guard: bool = True) -> dict[str, Any]:
     command = [sys.executable, str((ROOT_DIR / "run_url_agent.py").resolve()), "--url", url, "--slow-mo", str(slow_mo)]
     if headless:
         command.append("--headless")
+    if visual_guard:
+        command.append("--visual-guard")
     result = subprocess.run(
         command,
         capture_output=True,

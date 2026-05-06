@@ -112,28 +112,35 @@ def run_step(
     browser_results: dict[str, dict[str, int]],
     logger,
     mobile_number: str,
+    logger_tab_name: str | None = None,
     heal_retry_delay: float = 0.35,
 ) -> None:
     full_title = f"[{browser_name}] {step_name}"
     unblock_actions: list[str] = []
     try:
-        func()
+        result = func()
     except Exception as exc:
         if is_locator_error(exc):
             unblock_actions = auto_unblock_page(page)
             time.sleep(heal_retry_delay)
             try:
-                func()
+                result = func()
                 browser_results[browser_name]["Pass"] += 1
+                pass_remarks = result if isinstance(result, str) else ""
                 print(f"[Pass-Healed] {step_name}: {exc} | unblock={unblock_actions}")
                 if logger:
                     logger.log_status(
                         full_title,
                         "Pass",
-                        f"Healed and retried successfully after: {type(exc).__name__}: {exc} | unblock={', '.join(unblock_actions) if unblock_actions else 'none'}",
+                        (
+                            f"Healed and retried successfully after: {type(exc).__name__}: {exc} "
+                            f"| unblock={', '.join(unblock_actions) if unblock_actions else 'none'}"
+                            + (f" | {pass_remarks}" if pass_remarks else "")
+                        ),
                         browser_name,
                         mobile_number,
                         run_time,
+                        tab_name=logger_tab_name,
                     )
                 ExecutionStore().record_step_event(
                     suite_name=getattr(page, "_context", {}).get("suite_name"),
@@ -151,17 +158,23 @@ def run_step(
                 unblock_actions = auto_unblock_page(page)
                 time.sleep(heal_retry_delay)
                 try:
-                    func()
+                    result = func()
                     browser_results[browser_name]["Pass"] += 1
+                    pass_remarks = result if isinstance(result, str) else ""
                     print(f"[Pass-Healed-2] {step_name}: {exc} | unblock={unblock_actions}")
                     if logger:
                         logger.log_status(
                             full_title,
                             "Pass",
-                            f"Healed on second retry after: {type(exc).__name__}: {exc} | unblock={', '.join(unblock_actions) if unblock_actions else 'none'}",
+                            (
+                                f"Healed on second retry after: {type(exc).__name__}: {exc} "
+                                f"| unblock={', '.join(unblock_actions) if unblock_actions else 'none'}"
+                                + (f" | {pass_remarks}" if pass_remarks else "")
+                            ),
                             browser_name,
                             mobile_number,
                             run_time,
+                            tab_name=logger_tab_name,
                         )
                     ExecutionStore().record_step_event(
                         suite_name=getattr(page, "_context", {}).get("suite_name"),
@@ -190,7 +203,15 @@ def run_step(
         )
         print(f"[Fail] {step_name}: {error_msg} (Screenshot: {screenshot_name})")
         if logger:
-            logger.log_status(full_title, "Fail", error_msg, browser_name, mobile_number, run_time)
+            logger.log_status(
+                full_title,
+                "Fail",
+                error_msg,
+                browser_name,
+                mobile_number,
+                run_time,
+                tab_name=logger_tab_name,
+            )
         ExecutionStore().record_step_event(
             suite_name=getattr(page, "_context", {}).get("suite_name"),
             module_name=getattr(page, "_context", {}).get("module_name"),
@@ -209,9 +230,18 @@ def run_step(
         raise
     else:
         browser_results[browser_name]["Pass"] += 1
+        pass_remarks = result if isinstance(result, str) else ""
         print(f"[Pass] {step_name}")
         if logger:
-            logger.log_status(full_title, "Pass", "", browser_name, mobile_number, run_time)
+            logger.log_status(
+                full_title,
+                "Pass",
+                pass_remarks,
+                browser_name,
+                mobile_number,
+                run_time,
+                tab_name=logger_tab_name,
+            )
         ExecutionStore().record_step_event(
             suite_name=getattr(page, "_context", {}).get("suite_name"),
             module_name=getattr(page, "_context", {}).get("module_name"),

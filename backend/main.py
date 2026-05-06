@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +13,7 @@ from core.api_services import (
     get_status_payload,
     latest_run_for_module,
     list_locator_healings,
+    list_module_tests,
     list_modules_payload,
     list_runs,
     list_sheet_tabs,
@@ -22,44 +23,66 @@ from core.api_services import (
     send_sheet_report_email,
     run_url_audit,
 )
+from core.workspace_settings import save_workspace_settings
 
 
 class URLAgentRequest(BaseModel):
     url: str
     headless: bool = False
     slow_mo: int = Field(default=100, ge=0, le=5000)
+    visual_guard: bool = True
 
 
 class TestLinkRequest(BaseModel):
     module_id: str
     suite_id: int
-    output_dir: str | None = None
+    output_dir: Optional[str] = None
     overwrite: bool = False
-    max_cases: int | None = Field(default=None, ge=1)
-    testlink_api_key: str | None = None
-    testlink_url: str | None = None
-    testlink_ca_bundle: str | None = None
-    testlink_insecure_skip_verify: bool | None = None
-    llm_api_key: str | None = None
-    llm_base_url: str | None = None
-    llm_model: str | None = None
+    max_cases: Optional[int] = Field(default=None, ge=1)
+    testlink_api_key: Optional[str] = None
+    testlink_url: Optional[str] = None
+    testlink_ca_bundle: Optional[str] = None
+    testlink_insecure_skip_verify: Optional[bool] = None
+    llm_api_key: Optional[str] = None
+    llm_base_url: Optional[str] = None
+    llm_model: Optional[str] = None
 
 
 class ModuleExecutionRequest(BaseModel):
     module_id: str
     browser_mode: str = Field(default="headed", pattern="^(headed|headless)$")
+    selected_tests: List[str] = Field(default_factory=list)
+    llm_api_key: Optional[str] = None
+    llm_base_url: Optional[str] = None
+    llm_model: Optional[str] = None
+    default_login_phone: Optional[str] = None
+    default_login_otp: Optional[str] = None
+    smtp_recipients: Optional[str] = None
 
 
 class SheetReportEmailRequest(BaseModel):
     module_id: str
     sheet_name: str
     tab_name: str
-    status: list[str] = Field(default_factory=list)
-    browser: list[str] = Field(default_factory=list)
-    start_date: str | None = None
-    end_date: str | None = None
-    search: str | None = None
-    recipients: list[str] = Field(default_factory=list)
+    status: List[str] = Field(default_factory=list)
+    browser: List[str] = Field(default_factory=list)
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    search: Optional[str] = None
+    recipients: List[str] = Field(default_factory=list)
+
+
+class WorkspaceSettingsRequest(BaseModel):
+    llm_api_key: Optional[str] = None
+    llm_base_url: Optional[str] = None
+    llm_model: Optional[str] = None
+    default_login_phone: Optional[str] = None
+    default_login_otp: Optional[str] = None
+    testlink_api_key: Optional[str] = None
+    testlink_url: Optional[str] = None
+    testlink_ca_bundle: Optional[str] = None
+    testlink_insecure_skip_verify: Optional[bool] = None
+    smtp_recipients: Optional[str] = None
 
 
 app = FastAPI(
@@ -77,9 +100,58 @@ app.add_middleware(
 )
 
 
+def module_env_overrides(request: ModuleExecutionRequest) -> dict[str, str]:
+    candidates = {
+        "AUTOMATION_LLM_API_KEY": request.llm_api_key,
+        "AUTOMATION_LLM_BASE_URL": request.llm_base_url,
+        "AUTOMATION_LLM_MODEL": request.llm_model,
+        "AUTOMATION_DEFAULT_LOGIN_PHONE": request.default_login_phone,
+        "AUTOMATION_DEFAULT_LOGIN_OTP": request.default_login_otp,
+        "AUTOMATION_SMTP_RECIPIENTS": request.smtp_recipients,
+    }
+    return {
+        key: value.strip()
+        for key, value in candidates.items()
+        if isinstance(value, str) and value.strip()
+    }
+
+
+def workspace_settings_env(request: WorkspaceSettingsRequest) -> dict[str, str]:
+    candidates = {
+        "AUTOMATION_LLM_API_KEY": request.llm_api_key,
+        "AUTOMATION_LLM_BASE_URL": request.llm_base_url,
+        "AUTOMATION_LLM_MODEL": request.llm_model,
+        "AUTOMATION_DEFAULT_LOGIN_PHONE": request.default_login_phone,
+        "AUTOMATION_DEFAULT_LOGIN_OTP": request.default_login_otp,
+        "AUTOMATION_TESTLINK_API_KEY": request.testlink_api_key,
+        "AUTOMATION_TESTLINK_URL": request.testlink_url,
+        "AUTOMATION_TESTLINK_CA_BUNDLE": request.testlink_ca_bundle,
+        "AUTOMATION_SMTP_RECIPIENTS": request.smtp_recipients,
+    }
+    values = {
+        key: value.strip()
+        for key, value in candidates.items()
+        if isinstance(value, str)
+    }
+    if request.testlink_insecure_skip_verify is not None:
+        values["AUTOMATION_TESTLINK_INSECURE_SKIP_VERIFY"] = "1" if request.testlink_insecure_skip_verify else "0"
+    return values
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/api/settings/workspace")
+def save_workspace_settings_endpoint(request: WorkspaceSettingsRequest) -> dict[str, Any]:
+    import os
+
+    values = save_workspace_settings(workspace_settings_env(request))
+    for key, value in values.items():
+        if value:
+            os.environ[key] = value
+    return {"saved": True, "keys": sorted(values.keys())}
 
 
 @app.get("/api/status")
@@ -102,6 +174,16 @@ def module_detail(module_id: str) -> dict[str, Any]:
     return payload
 
 
+@app.get("/api/modules/{module_id}/tests")
+def module_tests(module_id: str) -> dict[str, Any]:
+    try:
+        return {"tests": list_module_tests(module_id)}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not load module tests: {exc}") from exc
+
+
 @app.post("/api/modules/{module_id}/run")
 def run_selected_module(module_id: str) -> dict[str, Any]:
     try:
@@ -115,7 +197,12 @@ def run_selected_module(module_id: str) -> dict[str, Any]:
 @app.post("/api/executions/module/start")
 def start_module_execution(request: ModuleExecutionRequest) -> dict[str, Any]:
     try:
-        return task_manager.start_module(request.module_id, browser_mode=request.browser_mode)
+        return task_manager.start_module(
+            request.module_id,
+            browser_mode=request.browser_mode,
+            selected_tests=request.selected_tests,
+            env_overrides=module_env_overrides(request),
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
@@ -125,7 +212,12 @@ def start_module_execution(request: ModuleExecutionRequest) -> dict[str, Any]:
 @app.post("/api/executions/url-agent/start")
 def start_url_agent_execution(request: URLAgentRequest) -> dict[str, Any]:
     try:
-        return task_manager.start_url_agent(request.url, headless=request.headless, slow_mo=request.slow_mo)
+        return task_manager.start_url_agent(
+            request.url,
+            headless=request.headless,
+            slow_mo=request.slow_mo,
+            visual_guard=request.visual_guard,
+        )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Could not start URL agent execution: {exc}") from exc
 
@@ -166,7 +258,7 @@ def restart_execution(task_id: str) -> dict[str, Any]:
 @app.get("/api/runs")
 def runs(
     limit: int = Query(default=50, ge=1, le=500),
-    suite_name: str | None = None,
+    suite_name: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     return list_runs(limit=limit, suite_name=suite_name)
 
@@ -183,11 +275,11 @@ def sheet_tabs(sheet_name: str, fallback_tab: str) -> dict[str, Any]:
 def sheet_records(
     sheet_name: str,
     tab_name: str,
-    status: list[str] | None = Query(default=None),
-    browser: list[str] | None = Query(default=None),
-    start_date: str | None = None,
-    end_date: str | None = None,
-    search: str | None = None,
+    status: Optional[List[str]] = Query(default=None),
+    browser: Optional[List[str]] = Query(default=None),
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    search: Optional[str] = None,
 ) -> dict[str, Any]:
     try:
         records = read_sheet_records(
@@ -217,7 +309,12 @@ def diagnostics_steps(limit: int = Query(default=100, ge=1, le=500)) -> list[dic
 @app.post("/api/url-agent/run")
 def run_url_agent(request: URLAgentRequest) -> dict[str, Any]:
     try:
-        return run_url_audit(request.url, headless=request.headless, slow_mo=request.slow_mo)
+        return run_url_audit(
+            request.url,
+            headless=request.headless,
+            slow_mo=request.slow_mo,
+            visual_guard=request.visual_guard,
+        )
     except Exception as exc:
         detail = str(exc).strip() or repr(exc) or exc.__class__.__name__
         raise HTTPException(

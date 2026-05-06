@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 
-@dataclass(slots=True)
+@dataclass
 class LLMConfig:
     api_key: str
     base_url: str
@@ -58,6 +58,44 @@ class OpenAICompatibleLLM:
         )
         return self._parse_selectors(content)
 
+    def complete(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = 0.1,
+        timeout: int = 30,
+    ) -> str:
+        if not self.enabled:
+            return ""
+
+        payload = {
+            "model": self.config.model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+        request = urllib.request.Request(
+            f"{self.config.base_url.rstrip('/')}/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self.config.api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, ValueError):
+            return ""
+
+        return (
+            data.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+            .strip()
+        )
+
     @staticmethod
     def _build_prompt(locator_name: str, current_selectors: list[str], context: dict[str, Any]) -> str:
         return (
@@ -77,4 +115,3 @@ class OpenAICompatibleLLM:
             if item not in selectors:
                 selectors.append(item)
         return selectors
-

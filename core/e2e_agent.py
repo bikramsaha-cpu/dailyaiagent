@@ -19,7 +19,7 @@ from core.store import ExecutionStore, RunSummary
 VARIABLE_PATTERN = re.compile(r"\$\{([^}]+)\}")
 
 
-@dataclass(slots=True)
+@dataclass
 class AgentStep:
     name: str
     action: str
@@ -42,7 +42,7 @@ class AgentStep:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(slots=True)
+@dataclass
 class AgentFlow:
     suite_name: str
     module_name: str
