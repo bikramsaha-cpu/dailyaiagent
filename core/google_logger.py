@@ -5,6 +5,8 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 # The environment in this workspace points proxies at 127.0.0.1:9, which breaks Google auth.
 # Clear proxy vars so service-account requests can reach Google directly.
 for _proxy_var in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
@@ -12,6 +14,9 @@ for _proxy_var in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "http
 
 import gspread
 from google.oauth2.service_account import Credentials
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+load_dotenv(ROOT_DIR / ".env")
 
 
 class GoogleSheetLogger:
@@ -45,9 +50,9 @@ class GoogleSheetLogger:
         candidate_paths.extend(
             [
                 Path(__file__).resolve().parent / "credentials.json",
-                Path(__file__).resolve().parents[1] / "PBR" / "credentials.json",
-                Path(__file__).resolve().parents[1] / "enq" / "credentials.json",
-                Path(__file__).resolve().parents[1] / "credentials.json",
+                ROOT_DIR / "PBR" / "credentials.json",
+                ROOT_DIR / "enq" / "credentials.json",
+                ROOT_DIR / "credentials.json",
             ]
         )
         creds_path = next((path for path in candidate_paths if path.exists()), None)
