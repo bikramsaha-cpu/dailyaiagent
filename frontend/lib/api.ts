@@ -1,5 +1,5 @@
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "/qa-ai-agent/api/proxy";
+  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "/qa-ai-agent/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
@@ -18,7 +18,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         ? error.message
         : "The frontend could not reach the API server.";
     throw new Error(
-      `Backend API is unreachable. Start FastAPI on port 8000 or configure NEXT_PUBLIC_API_BASE_URL / API_SERVER_URL. ${message}`,
+      `Backend API is unreachable. Start the Next.js app or configure NEXT_PUBLIC_API_BASE_URL. ${message}`,
     );
   }
   if (!response.ok) {
@@ -209,6 +209,7 @@ export const api = {
       start_date?: string;
       end_date?: string;
       search?: string;
+      force_refresh?: boolean;
     },
   ) => {
     const params = new URLSearchParams({
@@ -229,6 +230,9 @@ export const api = {
     }
     if (filters?.search) {
       params.set("search", filters.search);
+    }
+    if (filters?.force_refresh) {
+      params.set("force_refresh", "true");
     }
     return request<{ records: SheetRecord[]; count: number }>(`/sheets/records?${params.toString()}`);
   },

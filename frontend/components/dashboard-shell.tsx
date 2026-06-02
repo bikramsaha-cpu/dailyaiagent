@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
   Activity,
   Bot,
@@ -56,6 +56,24 @@ type WorkspaceSettings = {
   smtpRecipients: string;
 };
 
+type ExecutionStepRow = {
+  title: string;
+  status: string;
+  remarks: string;
+};
+
+type ExecutionCaseRow = {
+  key: string;
+  testTitle: string;
+  status: string;
+  browser: string;
+  phone: string;
+  date: string;
+  time: string;
+  remarks: string;
+  steps: ExecutionStepRow[];
+};
+
 const DASHBOARD_TABS = [
   "Executions",
   "Downloads",
@@ -92,12 +110,12 @@ function StatCard({
   loading?: boolean;
 }) {
   return (
-    <div className={`rounded-[28px] border border-white/60 bg-white/80 p-6 shadow-soft backdrop-blur transition-all duration-300 ${loading ? "scale-[0.99]" : "scale-100"}`}>
+    <div className={`rounded-[20px] border border-white/60 bg-white/80 p-5 shadow-soft backdrop-blur transition-all duration-300 ${loading ? "scale-[0.99]" : "scale-100"}`}>
       <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">{label}</p>
       {loading ? (
         <div className="mt-4 h-12 w-24 animate-pulse rounded-2xl bg-slate-100" />
       ) : (
-        <p className={`mt-4 text-4xl font-semibold transition-all duration-300 ${accent}`}>{value}</p>
+        <p className={`mt-3 text-4xl font-semibold transition-all duration-300 ${accent}`}>{value}</p>
       )}
     </div>
   );
@@ -232,6 +250,104 @@ function buildHtmlReport(records: SheetRecord[], filters: Record<string, string>
 </html>`;
 }
 
+function stripBrowserPrefix(value: string) {
+  return value.replace(/^\[[^\]]+\]\s*/, "").trim();
+}
+
+function normalizeCaseTitle(value: string) {
+  const title = stripBrowserPrefix(value || "")
+    .replace(/^test[_\s-]+/i, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return title || "Untitled Test";
+}
+
+function formatStatus(status: string) {
+  const normalized = (status || "").trim().toLowerCase();
+  if (normalized === "pass") {
+    return "Pass";
+  }
+  if (normalized === "fail") {
+    return "Fail";
+  }
+  if (normalized === "pass-healed") {
+    return "Pass-Healed";
+  }
+  return status || "-";
+}
+
+function statusClass(status: string) {
+  const normalized = status.trim().toLowerCase();
+  if (normalized === "pass" || normalized === "pass-healed") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+  if (normalized === "fail") {
+    return "border-rose-200 bg-rose-50 text-rose-700";
+  }
+  return "border-slate-200 bg-slate-50 text-slate-600";
+}
+
+function buildExecutionCaseRows(records: SheetRecord[]) {
+  const grouped = new Map<string, ExecutionCaseRow>();
+
+  records.forEach((record, index) => {
+    const rawTitle = record["Test Title"] || record.test_title || record.Title || "Untitled Test";
+    const hasStepColumn = Boolean(record["Test Step"] || record.test_step);
+    const testTitle = hasStepColumn ? rawTitle : normalizeCaseTitle(record["Test Case"] || record.test_case || rawTitle);
+    const stepTitle = stripBrowserPrefix(record["Test Step"] || record.test_step || rawTitle || `Step ${index + 1}`) || `Step ${index + 1}`;
+    const browser = record.Browser || record.browser || "-";
+    const phone = record.Phone || record.phone || "-";
+    const date = record.Date || record.date || "-";
+    const time = record.Time || record.time || "-";
+    const key = `${testTitle}|${browser}|${phone}|${date}|${time}`;
+    const current = grouped.get(key);
+    const step = {
+      title: stepTitle,
+      status: formatStatus(record.Status || record.status || "-"),
+      remarks: record.Remarks || record.remarks || "",
+    };
+
+    if (!current) {
+      grouped.set(key, {
+        key,
+        testTitle,
+        status: step.status,
+        browser,
+        phone,
+        date,
+        time,
+        remarks: step.remarks,
+        steps: [step],
+      });
+      return;
+    }
+
+    current.steps.push(step);
+    if (step.status.toLowerCase() === "fail") {
+      current.status = "Fail";
+    }
+    if (!current.remarks && step.remarks) {
+      current.remarks = step.remarks;
+    }
+  });
+
+  return Array.from(grouped.values());
+}
+
+function executionCasesToSheetRecords(rows: ExecutionCaseRow[], includeRemarks: boolean): SheetRecord[] {
+  return rows.map((row) => ({
+    "Test Title": row.testTitle,
+    Status: row.status,
+    "Test Steps": row.steps.map((step) => `${step.status}: ${step.title}`).join(" | "),
+    ...(includeRemarks ? { Remarks: row.remarks || "-" } : {}),
+    Browser: row.browser,
+    Phone: row.phone,
+    Date: row.date,
+    Time: row.time,
+  }));
+}
+
 export function DashboardShell() {
   const [mounted, setMounted] = useState(false);
   const [data, setData] = useState<LoadState>({ modules: [], runs: [] });
@@ -246,10 +362,10 @@ export function DashboardShell() {
   const [statusFilter, setStatusFilter] = useState<string[]>([]);
   const [browserFilter, setBrowserFilter] = useState<string[]>([]);
   const [searchText, setSearchText] = useState("");
+  const [showRemarks, setShowRemarks] = useState(false);
+  const [expandedCaseRows, setExpandedCaseRows] = useState<string[]>([]);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [quickFiltersOpen, setQuickFiltersOpen] = useState(true);
-  const [dateRangeOpen, setDateRangeOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [diagnosticView, setDiagnosticView] = useState<"Healing History" | "Step Failures">("Healing History");
   const [healings, setHealings] = useState<DiagnosticsHealingItem[]>([]);
@@ -348,6 +464,70 @@ export function DashboardShell() {
     });
   }, []);
 
+  const selectedDefinition = useMemo(
+    () => data.modules.find((module) => module.id === selectedModule) || data.modules[0],
+    [data.modules, selectedModule],
+  );
+
+  const refreshSheetRecords = useCallback(
+    async (forceRefresh = false) => {
+      if (!selectedDefinition || !selectedSheetTab) {
+        return;
+      }
+      if (sheetTabs.length && !sheetTabs.includes(selectedSheetTab)) {
+        return;
+      }
+      setIsSheetLoading(true);
+      setError("");
+      const cacheKey = `${selectedDefinition.sheet_name}::${selectedSheetTab}`;
+      const cachedRecords = loadedSheetRecordsRef.current[cacheKey];
+      if (cachedRecords && !forceRefresh) {
+        const statuses = Array.from(new Set(cachedRecords.map((row) => row.Status).filter(Boolean))).sort();
+        const browsers = Array.from(new Set(cachedRecords.map((row) => row.Browser).filter(Boolean))).sort();
+        const dates = cachedRecords
+          .map((row) => parseSheetDate(row.Date))
+          .filter((value): value is string => Boolean(value))
+          .sort();
+        setAvailableStatuses(statuses);
+        setAvailableBrowsers(browsers);
+        setStatusFilter(statuses);
+        setBrowserFilter(browsers);
+        setStartDate(dates[0] || "");
+        setEndDate(dates[dates.length - 1] || "");
+        setRawSheetRecords(cachedRecords);
+        setIsSheetLoading(false);
+        return;
+      }
+      if (forceRefresh) {
+        delete loadedSheetRecordsRef.current[cacheKey];
+      }
+      setRawSheetRecords([]);
+      try {
+        const payload = await api.getSheetRecords(selectedDefinition.sheet_name, selectedSheetTab, {
+          force_refresh: forceRefresh,
+        });
+        const records = payload.records;
+        loadedSheetRecordsRef.current[cacheKey] = records;
+        const statuses = Array.from(new Set(records.map((row) => row.Status).filter(Boolean))).sort();
+        const browsers = Array.from(new Set(records.map((row) => row.Browser).filter(Boolean))).sort();
+        const dates = records.map((row) => parseSheetDate(row.Date)).filter((value): value is string => Boolean(value));
+        dates.sort();
+        setAvailableStatuses(statuses);
+        setAvailableBrowsers(browsers);
+        setStatusFilter(statuses);
+        setBrowserFilter(browsers);
+        setStartDate(dates[0] || "");
+        setEndDate(dates[dates.length - 1] || "");
+        setRawSheetRecords(records);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not load sheet records.");
+      } finally {
+        setIsSheetLoading(false);
+      }
+    },
+    [selectedDefinition, selectedSheetTab, sheetTabs],
+  );
+
   useEffect(() => {
     if (!activeTask?.id) {
       return;
@@ -363,7 +543,8 @@ export function DashboardShell() {
           if (task.kind === "module" && task.result) {
             const run = task.result as RunItem;
             setData((current) => ({ ...current, runs: [run, ...current.runs].slice(0, 20) }));
-            setActiveTab("Launcher History");
+            setActiveTab("Executions");
+            void refreshSheetRecords(true);
           }
           if (task.kind === "url_agent" && task.result) {
             setUrlAgentResult(task.result as UrlAgentRunResponse);
@@ -379,12 +560,7 @@ export function DashboardShell() {
       }
     }, 1500);
     return () => window.clearInterval(timer);
-  }, [activeTask?.id]);
-
-  const selectedDefinition = useMemo(
-    () => data.modules.find((module) => module.id === selectedModule) || data.modules[0],
-    [data.modules, selectedModule],
-  );
+  }, [activeTask?.id, refreshSheetRecords]);
 
   useEffect(() => {
     setSelectedSheetTab("");
@@ -440,58 +616,8 @@ export function DashboardShell() {
   }, [selectedDefinition]);
 
   useEffect(() => {
-    if (!selectedDefinition || !selectedSheetTab) {
-      return;
-    }
-    if (sheetTabs.length && !sheetTabs.includes(selectedSheetTab)) {
-      return;
-    }
-    const loadTabData = async () => {
-      setIsSheetLoading(true);
-      setError("");
-      const cacheKey = `${selectedDefinition.sheet_name}::${selectedSheetTab}`;
-      const cachedRecords = loadedSheetRecordsRef.current[cacheKey];
-      if (cachedRecords) {
-        const statuses = Array.from(new Set(cachedRecords.map((row) => row.Status).filter(Boolean))).sort();
-        const browsers = Array.from(new Set(cachedRecords.map((row) => row.Browser).filter(Boolean))).sort();
-        const dates = cachedRecords
-          .map((row) => parseSheetDate(row.Date))
-          .filter((value): value is string => Boolean(value))
-          .sort();
-        setAvailableStatuses(statuses);
-        setAvailableBrowsers(browsers);
-        setStatusFilter(statuses);
-        setBrowserFilter(browsers);
-        setStartDate(dates[0] || "");
-        setEndDate(dates[dates.length - 1] || "");
-        setRawSheetRecords(cachedRecords);
-        setIsSheetLoading(false);
-        return;
-      }
-      setRawSheetRecords([]);
-      try {
-        const payload = await api.getSheetRecords(selectedDefinition.sheet_name, selectedSheetTab);
-        const records = payload.records;
-        loadedSheetRecordsRef.current[cacheKey] = records;
-        const statuses = Array.from(new Set(records.map((row) => row.Status).filter(Boolean))).sort();
-        const browsers = Array.from(new Set(records.map((row) => row.Browser).filter(Boolean))).sort();
-        const dates = records.map((row) => parseSheetDate(row.Date)).filter((value): value is string => Boolean(value));
-        dates.sort();
-        setAvailableStatuses(statuses);
-        setAvailableBrowsers(browsers);
-        setStatusFilter(statuses);
-        setBrowserFilter(browsers);
-        setStartDate(dates[0] || "");
-        setEndDate(dates[dates.length - 1] || "");
-        setRawSheetRecords(records);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Could not load sheet records.");
-      } finally {
-        setIsSheetLoading(false);
-      }
-    };
-    void loadTabData();
-  }, [selectedDefinition, selectedSheetTab]);
+    void refreshSheetRecords(false);
+  }, [refreshSheetRecords]);
 
   const sheetRecords = useMemo(() => {
     const normalizedSearch = searchText.trim().toLowerCase();
@@ -521,12 +647,20 @@ export function DashboardShell() {
   }, [browserFilter, endDate, rawSheetRecords, searchText, startDate, statusFilter]);
 
   const executionTotals = useMemo(() => {
-    const total = sheetRecords.length;
-    const passed = sheetRecords.filter((row) => (row.Status || "").trim().toLowerCase() === "pass").length;
-    const failed = sheetRecords.filter((row) => (row.Status || "").trim().toLowerCase() === "fail").length;
+    const rows = buildExecutionCaseRows(sheetRecords);
+    const total = rows.length;
+    const passed = rows.filter((row) => row.status.trim().toLowerCase() === "pass").length;
+    const failed = rows.filter((row) => row.status.trim().toLowerCase() === "fail").length;
     const passRate = total ? `${((passed / total) * 100).toFixed(1)}%` : "0.0%";
     return { total, passed, failed, passRate };
   }, [sheetRecords]);
+
+  const executionCaseRows = useMemo(() => buildExecutionCaseRows(sheetRecords), [sheetRecords]);
+
+  const executionExportRows = useMemo(
+    () => executionCasesToSheetRecords(executionCaseRows, showRemarks),
+    [executionCaseRows, showRemarks],
+  );
 
   const suiteRuns = useMemo(() => {
     if (!selectedDefinition) {
@@ -546,30 +680,6 @@ export function DashboardShell() {
     const scoped = selectedDefinition ? stepEvents.filter((row) => row.suite_name === selectedDefinition.suite) : stepEvents;
     return scoped.filter((row) => (row.status || "").toLowerCase().startsWith("fail"));
   }, [selectedDefinition, stepEvents]);
-
-  const tableHeaders = useMemo(() => {
-    if (!sheetRecords.length) {
-      return [];
-    }
-    return Object.keys(sheetRecords[0]);
-  }, [sheetRecords]);
-
-  const activeFilterCount = useMemo(() => {
-    let count = 0;
-    if (searchText.trim()) {
-      count += 1;
-    }
-    if (startDate || endDate) {
-      count += 1;
-    }
-    if (statusFilter.length && statusFilter.length !== availableStatuses.length) {
-      count += 1;
-    }
-    if (browserFilter.length && browserFilter.length !== availableBrowsers.length) {
-      count += 1;
-    }
-    return count;
-  }, [availableBrowsers.length, availableStatuses.length, browserFilter.length, endDate, searchText, startDate, statusFilter.length]);
 
   const activeExecutionLabel = useMemo(() => {
     if (isRunningUrlAgent) {
@@ -814,29 +924,113 @@ export function DashboardShell() {
   }
 
   function renderExecutionsTable() {
+    const tableColSpan = showRemarks ? 8 : 7;
     return (
-      <div className="rounded-[32px] border border-slate-200/70 bg-white/85 p-6 shadow-soft">
+      <div className="rounded-[24px] border border-slate-200/70 bg-white/85 p-5 shadow-soft">
         <SectionTitle
           icon={<Filter className="h-5 w-5" />}
           title="Filtered Execution Data"
-          description={isSheetLoading ? "Refreshing records for the selected module..." : "Table filters update instantly in the current view."}
+          description={isSheetLoading ? "Refreshing records for the selected module..." : "One row per test case with expandable execution steps."}
         />
-        <div className="mt-5 overflow-hidden rounded-3xl border border-slate-100">
+        <div className="mt-4 space-y-3 overflow-hidden rounded-[20px] border border-slate-100 bg-slate-50/70 p-3">
+          <div className="grid min-w-0 grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-[minmax(140px,180px)_minmax(180px,1fr)_minmax(130px,150px)_minmax(130px,150px)_88px_120px]">
+            <select
+              className="min-h-[42px] min-w-0 rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-cobalt focus:ring-4 focus:ring-blue-100"
+              value={selectedSheetTab}
+              onChange={(event) => setSelectedSheetTab(event.target.value)}
+            >
+              {sheetTabs.map((tab) => (
+                <option key={tab} value={tab}>
+                  {tab}
+                </option>
+              ))}
+            </select>
+            <input
+              type="search"
+              value={searchText}
+              onChange={(event) => setSearchText(event.target.value)}
+              placeholder="Filter by test case, step, browser, status..."
+              className="min-h-[42px] min-w-0 rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-cobalt focus:ring-4 focus:ring-blue-100"
+            />
+            <input
+              type="date"
+              value={startDate}
+              onChange={(event) => setStartDate(event.target.value)}
+              className="min-h-[42px] min-w-0 rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-cobalt focus:ring-4 focus:ring-blue-100"
+            />
+            <input
+              type="date"
+              value={endDate}
+              onChange={(event) => setEndDate(event.target.value)}
+              className="min-h-[42px] min-w-0 rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-cobalt focus:ring-4 focus:ring-blue-100"
+            />
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="inline-flex min-h-[42px] min-w-0 items-center justify-center rounded-2xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition hover:border-cobalt hover:text-cobalt"
+            >
+              Reset
+            </button>
+            <button
+              type="button"
+              onClick={() => refreshSheetRecords(true)}
+              disabled={isSheetLoading}
+              className="inline-flex min-h-[42px] min-w-0 items-center justify-center gap-2 rounded-2xl border border-cobalt bg-white px-3 text-sm font-semibold text-cobalt transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isSheetLoading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+              Sync Sheet
+            </button>
+          </div>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            {availableStatuses.map((status) => (
+              <FilterChip
+                key={status}
+                label={status}
+                active={statusFilter.includes(status)}
+                onClick={() => setStatusFilter((current) => toggleFilterValue(current, status))}
+              />
+            ))}
+            {availableBrowsers.map((browser) => (
+              <FilterChip
+                key={browser}
+                label={browser}
+                active={browserFilter.includes(browser)}
+                onClick={() => setBrowserFilter((current) => toggleFilterValue(current, browser))}
+              />
+            ))}
+            <button
+              type="button"
+              onClick={() => setShowRemarks((current) => !current)}
+              className={`rounded-full border px-3 py-2 text-sm font-medium transition ${
+                showRemarks
+                  ? "border-cobalt bg-blue-50 text-cobalt"
+                  : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+              }`}
+            >
+              {showRemarks ? "Hide Remarks" : "Show Remarks"}
+            </button>
+          </div>
+        </div>
+        <div className="mt-4 overflow-hidden rounded-[20px] border border-slate-100">
           <div className="max-h-[560px] overflow-auto">
             <table className="min-w-full divide-y divide-slate-100 text-sm">
               <thead className="sticky top-0 bg-slate-50">
                 <tr className="text-left text-slate-500">
-                  {tableHeaders.map((header) => (
-                    <th key={header} className="whitespace-nowrap px-4 py-3 font-medium">
-                      {header}
-                    </th>
-                  ))}
+                  <th className="w-10 px-4 py-3 font-medium"></th>
+                  <th className="min-w-[220px] px-4 py-3 font-medium">Test Title</th>
+                  <th className="px-4 py-3 font-medium">Status</th>
+                  <th className="min-w-[260px] px-4 py-3 font-medium">Test Steps</th>
+                  {showRemarks ? <th className="min-w-[260px] px-4 py-3 font-medium">Remarks</th> : null}
+                  <th className="px-4 py-3 font-medium">Browser</th>
+                  <th className="px-4 py-3 font-medium">Phone</th>
+                  <th className="px-4 py-3 font-medium">Date</th>
+                  <th className="px-4 py-3 font-medium">Time</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white">
                 {isSheetLoading ? (
                   <tr>
-                    <td className="px-4 py-8 text-slate-500" colSpan={Math.max(tableHeaders.length, 1)}>
+                    <td className="px-4 py-8 text-slate-500" colSpan={tableColSpan + 1}>
                       <span className="inline-flex items-center gap-2">
                         <LoaderCircle className="h-4 w-4 animate-spin" />
                         Loading module data...
@@ -844,18 +1038,68 @@ export function DashboardShell() {
                     </td>
                   </tr>
                 ) : null}
-                {sheetRecords.map((row, index) => (
-                  <tr key={`${row["Test Title"] || row.test_title || "row"}-${index}`}>
-                    {tableHeaders.map((header) => (
-                      <td key={header} className="px-4 py-3 align-top text-slate-700">
-                        {row[header] || "-"}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-                {!isSheetLoading && sheetRecords.length === 0 ? (
+                {executionCaseRows.map((row) => {
+                  const isExpanded = expandedCaseRows.includes(row.key);
+                  const failedSteps = row.steps.filter((step) => step.status.toLowerCase() === "fail").length;
+                  return (
+                    <Fragment key={row.key}>
+                      <tr key={row.key} className="align-top">
+                        <td className="px-4 py-3">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedCaseRows((current) =>
+                                current.includes(row.key) ? current.filter((key) => key !== row.key) : [...current, row.key],
+                              )
+                            }
+                            className="rounded-full border border-slate-200 p-1 text-slate-500 transition hover:border-cobalt hover:text-cobalt"
+                            aria-label={isExpanded ? "Hide test steps" : "Show test steps"}
+                          >
+                            {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                          </button>
+                        </td>
+                        <td className="px-4 py-3 font-medium text-slate-900">{row.testTitle}</td>
+                        <td className="px-4 py-3">
+                          <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${statusClass(row.status)}`}>
+                            {row.status}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-slate-700">
+                          {row.steps.length} step{row.steps.length === 1 ? "" : "s"}
+                          {failedSteps ? <span className="ml-2 text-rose-600">{failedSteps} failed</span> : null}
+                        </td>
+                        {showRemarks ? <td className="max-w-[360px] px-4 py-3 text-slate-700">{row.remarks || "-"}</td> : null}
+                        <td className="px-4 py-3 text-slate-700">{row.browser}</td>
+                        <td className="px-4 py-3 text-slate-700">{row.phone}</td>
+                        <td className="px-4 py-3 text-slate-700">{row.date}</td>
+                        <td className="px-4 py-3 text-slate-700">{row.time}</td>
+                      </tr>
+                      {isExpanded ? (
+                        <tr key={`${row.key}-steps`}>
+                          <td className="bg-slate-50 px-4 py-3" colSpan={tableColSpan + 1}>
+                            <div className="rounded-2xl border border-slate-200 bg-white">
+                              {row.steps.map((step, stepIndex) => (
+                                <div
+                                  key={`${row.key}-${step.title}-${stepIndex}`}
+                                  className="grid gap-3 border-b border-slate-100 px-4 py-3 last:border-b-0 md:grid-cols-[minmax(200px,1fr)_120px_minmax(240px,1.2fr)]"
+                                >
+                                  <p className="font-medium text-slate-800">{step.title}</p>
+                                  <span className={`w-fit rounded-full border px-3 py-1 text-xs font-semibold ${statusClass(step.status)}`}>
+                                    {step.status}
+                                  </span>
+                                  {showRemarks ? <p className="text-slate-600">{step.remarks || "-"}</p> : <span />}
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
+                  );
+                })}
+                {!isSheetLoading && executionCaseRows.length === 0 ? (
                   <tr>
-                    <td className="px-4 py-6 text-slate-500" colSpan={Math.max(tableHeaders.length, 1)}>
+                    <td className="px-4 py-6 text-slate-500" colSpan={tableColSpan + 1}>
                       No rows matched the selected filters.
                     </td>
                   </tr>
@@ -889,7 +1133,7 @@ export function DashboardShell() {
         <div className="mt-6 grid gap-4 md:grid-cols-3">
           <button
             type="button"
-            onClick={() => downloadFile(`${selectedSheetTab || "executions"}_filtered.csv`, buildCsv(sheetRecords), "text/csv")}
+            onClick={() => downloadFile(`${selectedSheetTab || "executions"}_filtered.csv`, buildCsv(executionExportRows), "text/csv")}
             className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-left text-slate-900 transition hover:border-cobalt hover:bg-blue-50"
           >
             <p className="font-semibold">Download CSV</p>
@@ -900,7 +1144,7 @@ export function DashboardShell() {
             onClick={() =>
               downloadFile(
                 `${selectedSheetTab || "executions"}_report.html`,
-                buildHtmlReport(sheetRecords, filterSummary),
+                buildHtmlReport(executionExportRows, filterSummary),
                 "text/html",
               )
             }
@@ -1013,6 +1257,11 @@ export function DashboardShell() {
               <StatCard label="Failed" value={generationResult.failed} accent="text-rose-600" />
             </div>
             <p className="mt-4 text-sm text-slate-500">Output folder: {generationResult.output_dir}</p>
+            {!generationResult.results.length ? (
+              <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                No generated files were returned. Check the Suite ID, TestLink API key, and LLM settings, then try again.
+              </div>
+            ) : null}
             <div className="mt-5 overflow-hidden rounded-3xl border border-slate-100">
               <div className="max-h-[420px] overflow-auto">
                 <table className="min-w-full divide-y divide-slate-100 text-sm">
@@ -1403,8 +1652,8 @@ export function DashboardShell() {
   }
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(41,84,255,0.12),_transparent_36%),linear-gradient(180deg,_#f7fbff_0%,_#eef5ff_100%)] px-6 py-8 text-ink md:px-10">
-      <div className="mx-auto max-w-7xl space-y-8">
+    <main className="min-h-screen overflow-x-hidden bg-[radial-gradient(circle_at_top_left,_rgba(41,84,255,0.12),_transparent_36%),linear-gradient(180deg,_#f7fbff_0%,_#eef5ff_100%)] px-4 py-5 text-ink md:px-6 xl:px-8">
+      <div className="mx-auto max-w-[1720px] space-y-5">
         {activeExecutionLabel ? (
           <section className="overflow-hidden rounded-[24px] border border-blue-100 bg-white/90 shadow-soft backdrop-blur">
             <div className="h-1.5 w-full overflow-hidden bg-blue-50">
@@ -1423,7 +1672,7 @@ export function DashboardShell() {
           </section>
         ) : null}
 
-        <section className="flex flex-wrap items-center justify-between gap-4 rounded-[28px] border border-white/70 bg-white/80 px-5 py-4 shadow-soft backdrop-blur">
+        <section className="flex flex-wrap items-center justify-between gap-4 rounded-[22px] border border-white/70 bg-white/80 px-5 py-4 shadow-soft backdrop-blur">
           <div className="flex items-center gap-3">
             <button
               type="button"
@@ -1455,8 +1704,8 @@ export function DashboardShell() {
           </div>
         </section>
 
-        <section className={`grid gap-6 ${sidebarCollapsed ? "lg:grid-cols-[88px_minmax(0,1fr)]" : "lg:grid-cols-[330px_minmax(0,1fr)]"}`}>
-          <aside className="rounded-[32px] border border-slate-200/70 bg-white/80 p-4 shadow-soft backdrop-blur">
+        <section className={`grid min-w-0 gap-5 ${sidebarCollapsed ? "lg:grid-cols-[80px_minmax(0,1fr)]" : "lg:grid-cols-[300px_minmax(0,1fr)]"}`}>
+          <aside className="rounded-[24px] border border-slate-200/70 bg-white/80 p-4 shadow-soft backdrop-blur">
             {sidebarCollapsed ? (
               <div className="flex h-full flex-col items-center gap-3 pt-2">
                 <button
@@ -1468,13 +1717,6 @@ export function DashboardShell() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setQuickFiltersOpen(true)}
-                  className="inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700"
-                >
-                  <Filter className="h-5 w-5" />
-                </button>
-                <button
-                  type="button"
                   onClick={() => setSettingsOpen(true)}
                   className="inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700"
                 >
@@ -1482,11 +1724,11 @@ export function DashboardShell() {
                 </button>
               </div>
             ) : (
-              <div className="space-y-6">
+              <div className="space-y-5">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-[0.26em] text-slate-500">Side Panel</p>
-                    <p className="mt-1 text-sm text-slate-500">Module, sheet tab, and quick filters in one place.</p>
+                    <p className="mt-1 text-sm text-slate-500">Module launcher and workspace controls.</p>
                   </div>
                   <button
                     type="button"
@@ -1497,7 +1739,7 @@ export function DashboardShell() {
                   </button>
                 </div>
 
-                <div className="rounded-[28px] border border-slate-200 bg-white p-4">
+                <div className="rounded-[20px] border border-slate-200 bg-white p-4">
                   <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Module Launcher</p>
                   <div className="mt-4 space-y-4">
                     <label className="block text-sm font-medium text-slate-600">
@@ -1608,105 +1850,11 @@ export function DashboardShell() {
                     ) : null}
                   </div>
                 </div>
-
-                <div className="rounded-[28px] border border-slate-200 bg-white p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Filters</p>
-                      <p className="mt-1 text-sm text-slate-500">{activeFilterCount ? `${activeFilterCount} active` : "Ready to filter"}</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={resetFilters}
-                      className="rounded-full border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600 transition hover:border-cobalt hover:text-cobalt"
-                    >
-                      Reset
-                    </button>
-                  </div>
-
-                  <div className="mt-4 space-y-4">
-                    <label className="block text-sm font-medium text-slate-600">
-                      Google Sheet Tab
-                      <select
-                        className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base text-slate-900 outline-none transition focus:border-cobalt"
-                        value={selectedSheetTab}
-                        onChange={(event) => setSelectedSheetTab(event.target.value)}
-                      >
-                        {sheetTabs.map((tab) => (
-                          <option key={tab} value={tab}>
-                            {tab}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label className="block text-sm font-medium text-slate-600">
-                      Search
-                      <input
-                        className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900 outline-none transition focus:border-cobalt"
-                        value={searchText}
-                        onChange={(event) => setSearchText(event.target.value)}
-                        placeholder="Search title, remarks, browser, phone..."
-                      />
-                    </label>
-
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <label className="block text-sm font-medium text-slate-600">
-                        Start date
-                        <input
-                          type="date"
-                          className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900 outline-none transition focus:border-cobalt"
-                          value={startDate}
-                          onChange={(event) => setStartDate(event.target.value)}
-                        />
-                      </label>
-                      <label className="block text-sm font-medium text-slate-600">
-                        End date
-                        <input
-                          type="date"
-                          className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900 outline-none transition focus:border-cobalt"
-                          value={endDate}
-                          onChange={(event) => setEndDate(event.target.value)}
-                        />
-                      </label>
-                    </div>
-
-                    <div className="space-y-3">
-                      <div>
-                        <p className="text-sm font-medium text-slate-600">Status</p>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {availableStatuses.map((status) => (
-                            <FilterChip
-                              key={status}
-                              label={status}
-                              active={statusFilter.includes(status)}
-                              onClick={() => setStatusFilter((current) => toggleFilterValue(current, status))}
-                            />
-                          ))}
-                        </div>
-                      </div>
-
-                      <div>
-                        <p className="text-sm font-medium text-slate-600">Browser</p>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {availableBrowsers.map((browser) => (
-                            <FilterChip
-                              key={browser}
-                              label={browser}
-                              active={browserFilter.includes(browser)}
-                              onClick={() => setBrowserFilter((current) => toggleFilterValue(current, browser))}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
               </div>
             )}
           </aside>
 
-          <div className="space-y-6">
+          <div className="min-w-0 space-y-5">
             {settingsOpen ? (
               <section className="rounded-[32px] border border-slate-200/70 bg-white/85 p-6 shadow-soft">
                 <div className="flex items-center justify-between gap-4">
@@ -1840,7 +1988,7 @@ export function DashboardShell() {
               <div className="rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-700">{error}</div>
             ) : null}
 
-            <section className="rounded-[32px] border border-slate-200/70 bg-white/80 p-5 shadow-soft">
+            <section className="rounded-[24px] border border-slate-200/70 bg-white/80 p-5 shadow-soft">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Workspace Tabs</p>
@@ -1859,7 +2007,7 @@ export function DashboardShell() {
                     key={tab}
                     type="button"
                     onClick={() => setActiveTab(tab)}
-                    className={`rounded-full border px-5 py-3 text-base transition ${
+                    className={`rounded-full border px-5 py-2.5 text-sm transition ${
                       activeTab === tab
                         ? "border-cobalt bg-[linear-gradient(135deg,rgba(42,86,255,0.12),rgba(28,167,216,0.12))] text-slate-900"
                         : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"

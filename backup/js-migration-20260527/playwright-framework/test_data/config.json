@@ -1,0 +1,5 @@
+{
+  "activeModules": ["enq", "pbr", "bmc"],
+  "defaultBrowsers": ["chromium", "firefox"],
+  "headlessEnv": "AUTOMATION_HEADLESS"
+}

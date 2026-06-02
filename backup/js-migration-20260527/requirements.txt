@@ -1,0 +1,11 @@
+playwright
+pytest
+gspread
+google-auth
+streamlit
+beautifulsoup4
+python-dotenv
+openai
+testlink-api-python-client
+fastapi
+uvicorn

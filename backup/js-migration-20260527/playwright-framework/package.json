@@ -1,0 +1,11 @@
+{
+  "name": "daily-qa-agent-playwright-framework",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "test:enq": "python -m pytest tests/enq",
+    "test:enq:smoke": "python -m pytest tests/enq -m \"enq and smoke\"",
+    "test:pbr": "python ../PBR/run_all.py",
+    "test:bmc": "python ../bmc/run_all.py"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "daily-qa-agent-enquiry-playwright",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "test:enquiry": "playwright test tests/enquiry",
+    "test:enquiry:headed": "playwright test tests/enquiry --headed",
+    "test:enquiry:smoke": "playwright test tests/enquiry/smoke",
+    "test:enquiry:regress": "playwright test tests/enquiry/regress",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0"
+  }
+}

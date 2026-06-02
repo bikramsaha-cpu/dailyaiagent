@@ -1,4 +1,4 @@
-# Python
+# Legacy Python caches kept only while old material sits in backup
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -10,6 +10,9 @@ artifacts/
 *.err
 *.png
 *.pdf
+playwright-framework/node_modules/
+playwright-framework/playwright-report/
+playwright-framework/test-results/
 
 # Local credentials and sessions
 **/credentials.json
@@ -27,8 +30,7 @@ artifacts/
 Thumbs.db
 .vscode/
 
-# Modern frontend/backend build output
+# Frontend build output
 frontend/node_modules/
 frontend/.next/
 frontend/out/
-backend/.venv/

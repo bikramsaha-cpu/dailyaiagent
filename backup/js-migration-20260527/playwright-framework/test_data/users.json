@@ -1,0 +1,6 @@
+{
+  "enq": {
+    "mobileEnv": "AUTOMATION_ENQ_MOBILE_NUMBER",
+    "otpEnv": "AUTOMATION_ENQ_LOGIN_OTP"
+  }
+}

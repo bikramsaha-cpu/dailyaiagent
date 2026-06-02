@@ -1,0 +1,6 @@
+SEARCH_INPUT = "input#search_string"
+SEARCH_BUTTON = "input#btnSearch"
+ALL_INDIA_CHIP = "ul#city-scrollbar1 li.newcitychip"
+CONTACT_SUPPLIER_BUTTON = "button.contactsupplier"
+ENQUIRY_NEXT_BUTTON = "button.submit-button, button:has-text('Next')"
+ENQUIRY_SUBMIT_INPUT = "input#t0901_submit"

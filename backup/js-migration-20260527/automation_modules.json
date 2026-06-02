@@ -1,0 +1,29 @@
+[
+  {
+    "id": "enq",
+    "label": "ENQ Desktop",
+    "suite": "ENQ",
+    "runner": "enq/run_all.py",
+    "description": "Runs the modern ENQ Playwright POM suite",
+    "sheet_name": "Buyer Automation",
+    "default_tab": "ENQ"
+  },
+  {
+    "id": "pbr",
+    "label": "PBR Desktop",
+    "suite": "PBR",
+    "runner": "PBR/run_all.py",
+    "description": "Runs the PBR automation bundle",
+    "sheet_name": "Buyer Automation",
+    "default_tab": "PBR"
+  },
+  {
+    "id": "bmc",
+    "label": "BMC Desktop",
+    "suite": "BMC",
+    "runner": "bmc/run_all.py",
+    "description": "Runs the BMC automation bundle",
+    "sheet_name": "Buyer Automation",
+    "default_tab": "BMC"
+  }
+]
